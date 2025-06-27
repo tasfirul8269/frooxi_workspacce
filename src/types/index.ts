@@ -93,27 +93,17 @@ export interface Role {
   organizationId: string;
 }
 
-export interface ChatCategory {
-  id: string;
-  name: string;
-  organizationId: string;
-  order: number;
-  createdBy: string;
-  createdAt: string;
-}
-
-export interface ChatChannel {
+export interface Group {
   id: string;
   name: string;
   type: 'text' | 'voice';
   privacy: 'public' | 'private';
-  categoryId: string | null;
-  allowedRoles: string[];
-  members: string[];
+  members: string[]; // user IDs
+  joinRequests: string[]; // user IDs
+  pinnedMessageId: string | null;
   organizationId: string;
   createdBy: string;
   createdAt: string;
-  lastReadBy?: { userId: string; lastReadMessageId: string }[];
 }
 
 export interface ChatMessage {

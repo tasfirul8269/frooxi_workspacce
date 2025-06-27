@@ -24,36 +24,33 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ onClose, onCreate }) 
   });
   const [newSubtask, setNewSubtask] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!organization || !user) return;
     
     const taskData = {
       title: formData.title,
       description: formData.description,
+      status: 'todo' as const,
       priority: formData.priority,
-      assigneeId: formData.assigneeId,
+      assigneeId: formData.assigneeId || user?.id || '',
+      organizationId: user?.organizationId || '',
       startDate: formData.startDate ? new Date(formData.startDate) : undefined,
       dueDate: formData.dueDate ? new Date(formData.dueDate) : undefined,
-      tags: formData.tags,
-      status: 'todo' as const,
-      createdById: user.id,
-      organizationId: organization.id,
+      tags: formData.tags.filter(tag => tag.trim() !== ''),
+      createdById: user?.id || '',
+      subtasks: [],
       attachments: [],
-      subtasks: formData.subtasks,
       comments: [],
-      activities: [{
-        id: '1',
-        type: 'created',
-        description: 'Task created',
-        userId: user.id,
-        createdAt: new Date(),
-      }],
+      activities: []
     };
 
-    console.log('TASK DATA TO BACKEND', taskData);
-    createTask(taskData);
-    onCreate(taskData);
+    try {
+      await createTask(taskData);
+      onClose();
+      resetForm();
+    } catch (error) {
+      console.error('Failed to create task:', error);
+    }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -78,6 +75,20 @@ const CreateTaskModal: React.FC<CreateTaskModalProps> = ({ onClose, onCreate }) 
       ...prev,
       subtasks: prev.subtasks.filter(st => st.id !== id),
     }));
+  };
+
+  const resetForm = () => {
+    setFormData({
+      title: '',
+      description: '',
+      priority: 'medium',
+      assigneeId: '',
+      startDate: '',
+      dueDate: '',
+      tags: [],
+      subtasks: [],
+    });
+    setNewSubtask('');
   };
 
   return (

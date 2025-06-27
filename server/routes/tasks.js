@@ -9,40 +9,12 @@ const { auth } = require('./users');
 // Create a new task
 router.post('/', auth, async (req, res) => {
   try {
-    console.log('TASK CREATE PAYLOAD', req.body);
-    console.log('TASK CREATE PAYLOAD (stringified)', JSON.stringify(req.body));
-    const { title, description, status, priority, assigneeId, createdById, organizationId, startDate, dueDate, tags, attachments, subtasks, comments, activities } = req.body;
-    // Always add a 'created' activity
-    const createdActivity = {
-      id: Date.now().toString(),
-      type: 'created',
-      description: 'Task created',
-      userId: req.userId, // from auth middleware
-      createdAt: new Date(),
-    };
-    // Filter out any duplicate 'created' activities (by type and userId)
-    let finalActivities = Array.isArray(activities) ? activities.filter(a => !(a.type === 'created' && a.userId === req.userId)) : [];
-    finalActivities.unshift(createdActivity); // always put at the start
-    const task = new Task({
-      title,
-      description,
-      status,
-      priority,
-      assigneeId,
-      createdById,
-      organizationId,
-      startDate,
-      dueDate,
-      tags,
-      attachments,
-      subtasks,
-      comments,
-      activities: finalActivities,
-    });
-    await task.save();
-    res.status(201).json({ task });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to create task', error: err.message });
+    const taskData = req.body;
+    const task = new Task(taskData);
+    const savedTask = await task.save();
+    res.status(201).json(savedTask);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
   }
 });
 
@@ -225,7 +197,51 @@ router.delete('/:id/comments/:commentId', auth, async (req, res) => {
 
 // Remove custom activity addition
 router.post('/:id/activities', auth, async (req, res) => {
-  res.status(403).json({ message: 'Custom activities are not allowed.' });
+  try {
+    const { type, description } = req.body;
+    if (!type || !description) return res.status(400).json({ message: 'Type and description are required' });
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(403).json({ message: 'Not authorized' });
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ message: 'Task not found' });
+    
+    const activity = {
+      id: Date.now().toString(),
+      type,
+      description,
+      userId: req.userId,
+      createdAt: new Date(),
+    };
+    task.activities.push(activity);
+    await task.save();
+    res.json({ activity, task });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to add activity', error: err.message });
+  }
+});
+
+// Delete an activity from a task
+router.delete('/:id/activities/:activityId', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) return res.status(403).json({ message: 'Not authorized' });
+    const task = await Task.findById(req.params.id);
+    if (!task) return res.status(404).json({ message: 'Task not found' });
+    
+    const activityIndex = task.activities.findIndex(a => a.id === req.params.activityId);
+    if (activityIndex === -1) return res.status(404).json({ message: 'Activity not found' });
+    
+    // Only admin can delete activities
+    if (user.role !== 'admin' && user.role !== 'super_admin') {
+      return res.status(403).json({ message: 'Not authorized to delete activities' });
+    }
+    
+    task.activities.splice(activityIndex, 1);
+    await task.save();
+    res.json({ success: true, task });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to delete activity', error: err.message });
+  }
 });
 
 module.exports = router; 

@@ -8,7 +8,8 @@ import {
   MoreHorizontal,
   User,
   Download,
-  Eye
+  Eye,
+  Pin
 } from 'lucide-react';
 import { ChatMessage, User as UserType } from '../../types';
 import { useApp } from '../../context/AppContext';
@@ -19,6 +20,9 @@ interface MessageComponentProps {
   onEdit: (message: ChatMessage) => void;
   currentUser: UserType | null;
   users: UserType[];
+  isAdmin?: boolean;
+  isPinned?: boolean;
+  onPin?: () => void;
 }
 
 const MessageComponent: React.FC<MessageComponentProps> = ({
@@ -26,7 +30,10 @@ const MessageComponent: React.FC<MessageComponentProps> = ({
   onReply,
   onEdit,
   currentUser,
-  users
+  users,
+  isAdmin = false,
+  isPinned = false,
+  onPin
 }) => {
   const { reactToMessage, deleteMessage } = useApp();
   const [showActions, setShowActions] = useState(false);
@@ -211,6 +218,16 @@ const MessageComponent: React.FC<MessageComponentProps> = ({
               title="Delete"
             >
               <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+          
+          {isAdmin && !isPinned && onPin && (
+            <button
+              onClick={onPin}
+              className="p-2 text-gray-400 hover:text-yellow-400 transition-colors"
+              title="Pin"
+            >
+              <Pin className="w-4 h-4" />
             </button>
           )}
           

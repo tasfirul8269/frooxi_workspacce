@@ -50,23 +50,27 @@ router.post('/', auth, async (req, res) => {
     const existing = await User.findOne({ email });
     if (existing) return res.status(400).json({ message: 'Email already in use' });
     const hashedPassword = await bcrypt.hash(password, 10);
+    let roleName = accountType;
+    let permissions = [];
+    if (accountType === 'employee' && roleId) {
+      const role = await Role.findById(roleId);
+      if (role) {
+        roleName = role.name;
+        permissions = role.permissions;
+      }
+    } else if (accountType === 'admin') {
+      permissions = ['create_tasks', 'manage_team', 'create_channels'];
+    }
     const newUser = new User({
       name,
       email,
       password: hashedPassword,
       avatar,
-      role: accountType,
+      role: roleName,
       organizationId: user.organizationId,
-      permissions: [],
+      permissions,
       createdAt: new Date(),
     });
-    // If employee, assign permissions from role
-    if (accountType === 'employee' && roleId) {
-      const role = await Role.findById(roleId);
-      if (role) newUser.permissions = role.permissions;
-    } else if (accountType === 'admin') {
-      newUser.permissions = ['create_tasks', 'manage_team', 'create_channels'];
-    }
     await newUser.save();
     res.status(201).json({ user: newUser });
   } catch (err) {
@@ -91,13 +95,18 @@ router.put('/:id', auth, async (req, res) => {
   try {
     const user = await User.findById(req.userId);
     if (!user || !user.organizationId) return res.status(403).json({ message: 'Not authorized' });
-    const { name, email, avatar, role, permissions, position } = req.body;
+    const { name, email, avatar, role, roleId, permissions, position } = req.body;
     const target = await User.findOne({ _id: req.params.id, organizationId: user.organizationId });
     if (!target) return res.status(404).json({ message: 'User not found' });
     if (name) target.name = name;
     if (email) target.email = email;
     if ('avatar' in req.body) target.avatar = avatar;
-    if (role) target.role = role;
+    if (roleId) {
+      const roleDoc = await Role.findById(roleId);
+      if (roleDoc) target.role = roleDoc.name;
+    } else if (role) {
+      target.role = role;
+    }
     if (permissions) target.permissions = permissions;
     if ('position' in req.body) target.position = position;
     await target.save();

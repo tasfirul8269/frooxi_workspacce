@@ -1,20 +1,18 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Task, Role, ChatChannel, Meeting, User, Activity, ChatMessage, ChatCategory } from '../types';
+import { Task, Role, Meeting, User, Activity, ChatMessage, Group } from '../types';
 import { useAuth } from './AuthContext';
 import { io as socketIOClient, Socket } from 'socket.io-client';
 
 interface AppContextType {
   tasks: Task[];
   roles: Role[];
-  channels: ChatChannel[];
-  categories: ChatCategory[];
   meetings: Meeting[];
   users: User[];
   messages: ChatMessage[];
+  groups: Group[];
   updateTask: (taskId: string, updates: Partial<Task>) => void;
   createTask: (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>) => void;
   addRole: (role: Omit<Role, 'id'>) => void;
-  createChannel: (channel: Omit<ChatChannel, 'id' | 'createdAt'>) => void;
   scheduleMeeting: (meeting: Omit<Meeting, 'id'>) => Promise<void>;
   updateMeeting: (id: string, updates: Partial<Meeting>) => Promise<void>;
   deleteMeeting: (id: string) => Promise<void>;
@@ -31,18 +29,31 @@ interface AppContextType {
   deleteComment: (taskId: string, commentId: string) => Promise<void>;
   addActivity: (taskId: string, activity: Omit<Activity, 'id' | 'createdAt'>) => Promise<void>;
   deleteActivity: (taskId: string, activityId: string) => Promise<void>;
-  fetchChannels: () => Promise<void>;
-  fetchMessages: (channelId: string) => Promise<void>;
-  sendMessage: (channelId: string, content: string, attachment?: any, replyTo?: string | null) => Promise<void>;
-  editMessage: (channelId: string, msgId: string, content: string) => Promise<void>;
-  deleteMessage: (channelId: string, msgId: string) => Promise<void>;
-  typingUsers: { [channelId: string]: { userId: string; userName: string; last: number }[] };
-  sendTyping: (channelId: string, userId: string, userName: string) => void;
-  lastReadBy: { [channelId: string]: { userId: string; lastReadMessageId: string }[] };
-  markAsRead: (channelId: string, lastReadMessageId: string) => Promise<void>;
-  reactToMessage: (channelId: string, msgId: string, emoji: string) => Promise<void>;
-  fetchCategories: () => Promise<void>;
+  fetchMessages: (groupId: string) => Promise<void>;
+  sendMessage: (groupId: string, content: string, attachment?: any, replyTo?: string | null) => Promise<void>;
+  editMessage: (groupId: string, msgId: string, content: string) => Promise<void>;
+  deleteMessage: (groupId: string, msgId: string) => Promise<void>;
+  typingUsers: { [groupId: string]: { userId: string; userName: string; last: number }[] };
+  sendTyping: (groupId: string, userId: string, userName: string) => void;
+  lastReadBy: { [groupId: string]: { userId: string; lastReadMessageId: string }[] };
+  markAsRead: (groupId: string, lastReadMessageId: string) => Promise<void>;
+  reactToMessage: (groupId: string, msgId: string, emoji: string) => Promise<void>;
   fetchMeetings: () => Promise<void>;
+  // Voice channel functionality
+  voiceUsers: { [groupId: string]: { socketId: string; id: string; name: string; avatar?: string }[] };
+  joinVoiceChannel: (groupId: string, user: { id: string; name: string; avatar?: string }) => void;
+  leaveVoiceChannel: (groupId: string) => void;
+  sendVoiceSignal: (groupId: string, targetSocketId: string, signal: any) => void;
+  fetchGroups: () => Promise<void>;
+  createGroup: (groupData: Omit<Group, 'id' | 'createdAt' | 'organizationId' | 'createdBy'>) => Promise<void>;
+  editGroup: (id: string, updates: Partial<Group>) => Promise<void>;
+  deleteGroup: (id: string) => Promise<void>;
+  leaveGroup: (groupId: string, userId: string) => Promise<void>;
+  requestJoinGroup: (groupId: string) => Promise<void>;
+  approveJoinRequest: (groupId: string, userId: string) => Promise<void>;
+  denyJoinRequest: (groupId: string, userId: string) => Promise<void>;
+  pinMessage: (groupId: string, msgId: string) => Promise<void>;
+  unpinMessage: (groupId: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -50,12 +61,10 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { organization } = useAuth();
+  const { organization, user } = useAuth();
   
   const [tasks, setTasks] = useState<Task[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
-  const [channels, setChannels] = useState<ChatChannel[]>([]);
-  const [categories, setCategories] = useState<ChatCategory[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -63,6 +72,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentChannel, setCurrentChannel] = useState<string>('');
   const [typingUsers, setTypingUsers] = useState<{ [channelId: string]: { userId: string; userName: string; last: number }[] }>({});
   const [lastReadBy, setLastReadBy] = useState<{ [channelId: string]: { userId: string; lastReadMessageId: string }[] }>({});
+  const [voiceUsers, setVoiceUsers] = useState<{ [channelId: string]: { socketId: string; id: string; name: string; avatar?: string }[] }>({});
+  const [groups, setGroups] = useState<Group[]>([]);
+  const prevChannelRef = React.useRef<string | null>(null);
 
   // Fetch tasks from backend
   const fetchTasks = async () => {
@@ -141,6 +153,65 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  // Edit role via backend
+  const editRole = async (id: string, updates: Partial<Role>) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/roles/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify(updates),
+    });
+    await fetchRoles();
+  };
+
+  // Delete role via backend
+  const deleteRole = async (id: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/roles/${id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    await fetchRoles();
+  };
+
+  // Fetch users from backend
+  const fetchUsers = async () => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    const res = await fetch(`${API_URL}/users`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setUsers(data.users.map((user: any) => ({ ...user, id: user._id })));
+    }
+  };
+
+  // Edit user via backend
+  const editUser = async (id: string, updates: Partial<User>) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/users/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify(updates),
+    });
+    await fetchUsers();
+  };
+
+  // Delete user via backend
+  const deleteUser = async (id: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/users/${id}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    await fetchUsers();
+  };
+
   // Create user via backend
   const createUser = async (userData: any) => {
     const token = localStorage.getItem('frooxi_token');
@@ -158,20 +229,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const fetchChannels = async () => {
-    const token = localStorage.getItem('frooxi_token');
-    if (!token) return;
-    const res = await fetch(`${API_URL}/chat/channels`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setChannels(data.channels.map((c: any) => ({ ...c, id: c._id })));
-    }
-  };
-
   const fetchMessages = async (channelId: string) => {
+    // Leave previous channel room if switching
+    if (socket && prevChannelRef.current && prevChannelRef.current !== channelId) {
+      socket.emit('leave-channel', prevChannelRef.current);
+    }
     setCurrentChannel(channelId);
+    prevChannelRef.current = channelId;
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
     const res = await fetch(`${API_URL}/chat/channels/${channelId}/messages`, {
@@ -192,17 +256,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       body: JSON.stringify({ content, attachment, replyTo }),
     });
     await fetchMessages(channelId);
-  };
-
-  const createChannel = async (channelData: Omit<ChatChannel, 'id' | 'createdAt'>) => {
-    const token = localStorage.getItem('frooxi_token');
-    if (!token) return;
-    await fetch(`${API_URL}/chat/channels`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(channelData),
-    });
-    await fetchChannels();
   };
 
   // Create meeting via backend
@@ -242,61 +295,351 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await fetchMeetings();
   };
 
-  const fetchUsers = async () => {
+  // Fetch meetings from backend
+  const fetchMeetings = async () => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    const res = await fetch(`${API_URL}/users`, {
+    const res = await fetch(`${API_URL}/meetings`, {
       headers: { 'Authorization': `Bearer ${token}` },
     });
     if (res.ok) {
       const data = await res.json();
-      setUsers(data.users.map((user: any) => ({ ...user, id: user._id })));
+      setMeetings(data.meetings.map((meeting: any) => ({ ...meeting, id: meeting._id })));
     }
   };
 
-  const editUser = async (id: string, updates: Partial<User>) => {
+  // Voice channel functions
+  const joinVoiceChannel = (channelId: string, userData: { id: string; name: string; avatar?: string }) => {
+    console.log('Joining voice channel:', { channelId, userData });
+    if (socket && user) {
+      // Authenticate user first
+      socket.emit('authenticate', user);
+      // Join voice channel with new event name
+      socket.emit('join-voice-channel', { channelId, user: userData });
+    } else {
+      console.error('Cannot join voice channel: socket or user not available');
+    }
+  };
+
+  const leaveVoiceChannel = (channelId: string) => {
+    console.log('Leaving voice channel:', channelId);
+    if (socket) {
+      socket.emit('leave-voice-channel', channelId);
+    }
+  };
+
+  const sendVoiceSignal = (channelId: string, targetSocketId: string, signal: any) => {
+    console.log('Sending voice signal:', { channelId, targetSocketId, signal });
+    if (socket) {
+      socket.emit('voice-signal', { channelId, targetSocketId, signal });
+    }
+  };
+
+  const fetchGroups = async () => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    await fetch(`${API_URL}/users/${id}`, {
+    const res = await fetch(`${API_URL}/chat/groups`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setGroups(data.groups.map((group: any) => ({ ...group, id: group._id })));
+    }
+  };
+
+  const createGroup = async (groupData: Omit<Group, 'id' | 'createdAt' | 'organizationId' | 'createdBy'>) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    const res = await fetch(`${API_URL}/chat/groups`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify(groupData),
+    });
+    if (res.ok) {
+      await fetchGroups();
+    }
+  };
+
+  const editGroup = async (id: string, updates: Partial<Group>) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/chat/groups/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify(updates),
     });
-    await fetchUsers();
+    await fetchGroups();
   };
 
-  const deleteUser = async (id: string) => {
+  const deleteGroup = async (id: string) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    await fetch(`${API_URL}/users/${id}`, {
+    await fetch(`${API_URL}/chat/groups/${id}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${token}` },
     });
-    await fetchUsers();
+    await fetchGroups();
   };
 
-  const editRole = async (id: string, updates: Partial<Role>) => {
+  const leaveGroup = async (groupId: string, userId: string) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    await fetch(`${API_URL}/roles/${id}`, {
-      method: 'PUT',
+    await fetch(`${API_URL}/chat/groups/${groupId}/leave`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify(updates),
+      body: JSON.stringify({ userId }),
     });
-    await fetchRoles();
+    await fetchGroups();
   };
 
-  const deleteRole = async (id: string) => {
+  const requestJoinGroup = async (groupId: string) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    const res = await fetch(`${API_URL}/roles/${id}`, {
+    await fetch(`${API_URL}/chat/groups/${groupId}/request-join`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    await fetchGroups();
+  };
+
+  const approveJoinRequest = async (groupId: string, userId: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/chat/groups/${groupId}/approve-join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ userId }),
+    });
+    await fetchGroups();
+  };
+
+  const denyJoinRequest = async (groupId: string, userId: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/chat/groups/${groupId}/deny-join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ userId }),
+    });
+    await fetchGroups();
+  };
+
+  const pinMessage = async (groupId: string, msgId: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/chat/groups/${groupId}/pin-message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ msgId }),
+    });
+    await fetchGroups();
+  };
+
+  const unpinMessage = async (groupId: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/chat/groups/${groupId}/unpin-message`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    await fetchGroups();
+  };
+
+  useEffect(() => {
+    if (organization) {
+      fetchRoles();
+      fetchUsers();
+      fetchTasks();
+      fetchMeetings();
+      fetchGroups();
+    }
+  }, [organization]);
+
+  useEffect(() => {
+    const s = socketIOClient(API_URL.replace('/api', ''));
+    setSocket(s);
+    
+    // Authenticate user when socket connects
+    s.on('connect', () => {
+      if (user) {
+        s.emit('authenticate', user);
+      }
+    });
+    
+    return () => { s.disconnect(); };
+  }, [user]);
+
+  useEffect(() => {
+    if (!socket) return;
+    if (currentChannel) {
+      socket.emit('join-channel', currentChannel);
+    }
+    const handleNewMessage = (msg: any) => {
+      setMessages(prev => [...prev, { ...msg, id: msg._id || msg.id }]);
+    };
+    const handleEditMessage = (msg: any) => {
+      setMessages(prev => prev.map(m => m.id === (msg._id || msg.id) ? { ...msg, id: msg._id || msg.id } : m));
+    };
+    const handleDeleteMessage = (msg: any) => {
+      setMessages(prev => prev.filter(m => m.id !== (msg.id || msg._id)));
+    };
+    const handleTyping = ({ channelId, userId, userName }: { channelId: string; userId: string; userName: string }) => {
+      setTypingUsers(prev => {
+        const now = Date.now();
+        const arr = (prev[channelId] || []).filter(u => u.userId !== userId);
+        return {
+          ...prev,
+          [channelId]: [...arr, { userId, userName, last: now }],
+        };
+      });
+    };
+    const handleRead = ({ userId, lastReadMessageId, channelId }: { userId: string; lastReadMessageId: string; channelId: string }) => {
+      setLastReadBy(prev => {
+        const arr = (prev[channelId] || []).filter(r => r.userId !== userId);
+        return {
+          ...prev,
+          [channelId]: [...arr, { userId, lastReadMessageId }],
+        };
+      });
+    };
+    const handleReaction = ({ msgId, reactions }: { msgId: string; reactions: any[] }) => {
+      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions } : m));
+    };
+    
+    // Voice channel handlers
+    const handleVoiceUsers = ({ channelId, users }: { channelId: string; users: { socketId: string; user: { id: string; name: string; avatar?: string } }[] }) => {
+      console.log('Voice users received:', { channelId, users });
+      setVoiceUsers(prev => ({
+        ...prev,
+        [channelId]: users.map(u => ({
+          socketId: u.socketId,
+          id: u.user.id,
+          name: u.user.name,
+          avatar: u.user.avatar
+        }))
+      }));
+    };
+
+    const handleUserJoinedVoice = ({ socketId, channelId, user }: { socketId: string; channelId: string; user: { id: string; name: string; avatar?: string } }) => {
+      console.log('User joined voice:', { socketId, channelId, user });
+      setVoiceUsers(prev => ({
+        ...prev,
+        [channelId]: [...(prev[channelId] || []), { socketId, id: user.id, name: user.name, avatar: user.avatar }]
+      }));
+    };
+
+    const handleUserLeftVoice = ({ socketId, channelId }: { socketId: string; channelId: string }) => {
+      console.log('User left voice:', { socketId, channelId });
+      setVoiceUsers(prev => ({
+        ...prev,
+        [channelId]: (prev[channelId] || []).filter(u => u.socketId !== socketId)
+      }));
+    };
+
+    const handleVoiceSignal = ({ from, data }: { from: string; data: any }) => {
+      console.log('Voice signal received:', { from, data });
+      // Emit voice signal event to ChatPage
+      window.dispatchEvent(new CustomEvent('voice-signal', {
+        detail: { from, data }
+      }));
+    };
+
+    // Real-time group pin/unpin
+    const handleGroupPin = ({ groupId, pinnedMessageId }: { groupId: string; pinnedMessageId: string | null }) => {
+      setGroups(prevGroups => prevGroups.map(g =>
+        g.id === groupId ? { ...g, pinnedMessageId } : g
+      ));
+    };
+
+    socket.on('chat:new_message', handleNewMessage);
+    socket.on('chat:edit_message', handleEditMessage);
+    socket.on('chat:delete_message', handleDeleteMessage);
+    socket.on('chat:typing', handleTyping);
+    socket.on('chat:read', handleRead);
+    socket.on('chat:reaction', handleReaction);
+    socket.on('voice-users', handleVoiceUsers);
+    socket.on('user-joined-voice', handleUserJoinedVoice);
+    socket.on('user-left-voice', handleUserLeftVoice);
+    socket.on('voice-signal', handleVoiceSignal);
+    socket.on('group:pin', handleGroupPin);
+    
+    return () => {
+      socket.off('chat:new_message', handleNewMessage);
+      socket.off('chat:edit_message', handleEditMessage);
+      socket.off('chat:delete_message', handleDeleteMessage);
+      socket.off('chat:typing', handleTyping);
+      socket.off('chat:read', handleRead);
+      socket.off('chat:reaction', handleReaction);
+      socket.off('voice-users', handleVoiceUsers);
+      socket.off('user-joined-voice', handleUserJoinedVoice);
+      socket.off('user-left-voice', handleUserLeftVoice);
+      socket.off('voice-signal', handleVoiceSignal);
+      socket.off('group:pin', handleGroupPin);
+    };
+  }, [socket, currentChannel]);
+
+  // Remove typing users after 3s
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTypingUsers(prev => {
+        const now = Date.now();
+        const updated: typeof prev = {};
+        for (const channelId in prev) {
+          updated[channelId] = prev[channelId].filter(u => now - u.last < 3000);
+        }
+        return updated;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const editMessage = async (channelId: string, msgId: string, content: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ content }),
+    });
+    // No need to refetch, socket will update
+  };
+
+  const deleteMessage = async (channelId: string, msgId: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${token}` },
     });
-    const data = await res.json().catch(() => ({}));
-    console.log('Delete role response:', res.status, data);
-    await fetchRoles();
-    console.log('Roles after deletion:', roles);
+    // No need to refetch, socket will update
+  };
+
+  const sendTyping = (channelId: string, userId: string, userName: string) => {
+    if (socket) {
+      socket.emit('typing-start', { channelId, userId, userName });
+    }
+  };
+
+  const markAsRead = async (channelId: string, lastReadMessageId: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/chat/channels/${channelId}/read`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ lastReadMessageId }),
+    });
+    // No need to refetch, socket will update
+  };
+
+  const reactToMessage = async (channelId: string, msgId: string, emoji: string) => {
+    const token = localStorage.getItem('frooxi_token');
+    if (!token) return;
+    await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}/reactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ emoji }),
+    });
+    // No need to refetch, socket will update
   };
 
   // Add a comment to a task
@@ -345,178 +688,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await fetchTasks();
   };
 
-  const fetchCategories = async () => {
-    const token = localStorage.getItem('frooxi_token');
-    if (!token) return;
-    const res = await fetch(`${API_URL}/chat/categories`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setCategories(data.categories.map((cat: any) => ({ ...cat, id: cat._id })));
-    }
-  };
-
-  // Fetch meetings from backend
-  const fetchMeetings = async () => {
-    const token = localStorage.getItem('frooxi_token');
-    if (!token) return;
-    const res = await fetch(`${API_URL}/meetings`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setMeetings(data.meetings.map((meeting: any) => ({ ...meeting, id: meeting._id })));
-    }
-  };
-
-  useEffect(() => {
-    if (organization) {
-      fetchRoles();
-      fetchUsers();
-      fetchTasks();
-      fetchChannels();
-      fetchCategories();
-      fetchMeetings();
-    }
-  }, [organization]);
-
-  useEffect(() => {
-    const s = socketIOClient(API_URL.replace('/api', ''));
-    setSocket(s);
-    return () => { s.disconnect(); };
-  }, []);
-
-  useEffect(() => {
-    if (!socket) return;
-    if (currentChannel) {
-      socket.emit('join', currentChannel);
-    }
-    const handleNewMessage = (msg: any) => {
-      setMessages(prev => [...prev, { ...msg, id: msg._id || msg.id }]);
-    };
-    const handleEditMessage = (msg: any) => {
-      setMessages(prev => prev.map(m => m.id === (msg._id || msg.id) ? { ...msg, id: msg._id || msg.id } : m));
-    };
-    const handleDeleteMessage = (msg: any) => {
-      setMessages(prev => prev.filter(m => m.id !== (msg.id || msg._id)));
-    };
-    const handleTyping = ({ channelId, userId, userName }: { channelId: string; userId: string; userName: string }) => {
-      setTypingUsers(prev => {
-        const now = Date.now();
-        const arr = (prev[channelId] || []).filter(u => u.userId !== userId);
-        return {
-          ...prev,
-          [channelId]: [...arr, { userId, userName, last: now }],
-        };
-      });
-    };
-    const handleRead = ({ userId, lastReadMessageId, channelId }: { userId: string; lastReadMessageId: string; channelId: string }) => {
-      setLastReadBy(prev => {
-        const arr = (prev[channelId] || []).filter(r => r.userId !== userId);
-        return {
-          ...prev,
-          [channelId]: [...arr, { userId, lastReadMessageId }],
-        };
-      });
-    };
-    const handleReaction = ({ msgId, reactions }: { msgId: string; reactions: any[] }) => {
-      setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions } : m));
-    };
-    socket.on('chat:new_message', handleNewMessage);
-    socket.on('chat:edit_message', handleEditMessage);
-    socket.on('chat:delete_message', handleDeleteMessage);
-    socket.on('chat:typing', handleTyping);
-    socket.on('chat:read', handleRead);
-    socket.on('chat:reaction', handleReaction);
-    return () => {
-      socket.off('chat:new_message', handleNewMessage);
-      socket.off('chat:edit_message', handleEditMessage);
-      socket.off('chat:delete_message', handleDeleteMessage);
-      socket.off('chat:typing', handleTyping);
-      socket.off('chat:read', handleRead);
-      socket.off('chat:reaction', handleReaction);
-    };
-  }, [socket, currentChannel]);
-
-  // Remove typing users after 3s
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTypingUsers(prev => {
-        const now = Date.now();
-        const updated: typeof prev = {};
-        for (const channelId in prev) {
-          updated[channelId] = prev[channelId].filter(u => now - u.last < 3000);
-        }
-        return updated;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const editMessage = async (channelId: string, msgId: string, content: string) => {
-    const token = localStorage.getItem('frooxi_token');
-    if (!token) return;
-    await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ content }),
-    });
-    // No need to refetch, socket will update
-  };
-
-  const deleteMessage = async (channelId: string, msgId: string) => {
-    const token = localStorage.getItem('frooxi_token');
-    if (!token) return;
-    await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` },
-    });
-    // No need to refetch, socket will update
-  };
-
-  const sendTyping = (channelId: string, userId: string, userName: string) => {
-    if (socket) {
-      socket.emit('chat:typing', { channelId, userId, userName });
-    }
-  };
-
-  const markAsRead = async (channelId: string, lastReadMessageId: string) => {
-    const token = localStorage.getItem('frooxi_token');
-    if (!token) return;
-    await fetch(`${API_URL}/chat/channels/${channelId}/read`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ lastReadMessageId }),
-    });
-    // No need to refetch, socket will update
-  };
-
-  const reactToMessage = async (channelId: string, msgId: string, emoji: string) => {
-    const token = localStorage.getItem('frooxi_token');
-    if (!token) return;
-    await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}/reactions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({ emoji }),
-    });
-    // No need to refetch, socket will update
-  };
-
   return (
     <AppContext.Provider value={{
       tasks,
       roles,
-      channels,
-      categories,
       meetings,
       users,
       messages,
+      groups,
       updateTask,
       createTask,
       addRole,
       createUser,
-      createChannel,
       scheduleMeeting,
       updateMeeting,
       deleteMeeting,
@@ -532,7 +715,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       deleteComment,
       addActivity,
       deleteActivity,
-      fetchChannels,
       fetchMessages,
       sendMessage,
       editMessage,
@@ -542,8 +724,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       lastReadBy,
       markAsRead,
       reactToMessage,
-      fetchCategories,
       fetchMeetings,
+      voiceUsers,
+      joinVoiceChannel,
+      leaveVoiceChannel,
+      sendVoiceSignal,
+      createGroup,
+      editGroup,
+      deleteGroup,
+      leaveGroup,
+      fetchGroups,
+      requestJoinGroup,
+      approveJoinRequest,
+      denyJoinRequest,
+      pinMessage,
+      unpinMessage,
     }}>
       {children}
     </AppContext.Provider>

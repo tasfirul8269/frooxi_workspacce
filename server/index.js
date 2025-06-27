@@ -47,43 +47,133 @@ const meetingsRoute = require('./routes/meetings');
 app.use('/api/meetings', meetingsRoute);
 
 const voiceChannelUsers = {};
+const typingUsers = {};
 
 io.on('connection', (socket) => {
-  console.log('Socket connected:', socket.id);
+  // Store user info in socket
+  socket.user = null;
+  socket.voiceChannel = null;
 
-  socket.on('join_voice', ({ channelId, user }) => {
-    socket.join(channelId);
-    if (!voiceChannelUsers[channelId]) voiceChannelUsers[channelId] = [];
-    if (!voiceChannelUsers[channelId].some(u => u.socketId === socket.id)) {
-      voiceChannelUsers[channelId].push({ socketId: socket.id, ...user });
-    }
-    io.to(channelId).emit('voice:users', voiceChannelUsers[channelId]);
+  // Handle user authentication
+  socket.on('authenticate', (userData) => {
+    socket.user = userData;
   });
 
-  socket.on('leave_voice', ({ channelId }) => {
+  // Handle joining chat channels
+  socket.on('join-channel', (channelId) => {
+    socket.join(channelId);
+    socket.channelId = channelId;
+  });
+
+  // Handle leaving chat channels
+  socket.on('leave-channel', (channelId) => {
     socket.leave(channelId);
+    if (socket.channelId === channelId) {
+      socket.channelId = null;
+    }
+  });
+
+  // Handle typing indicators
+  socket.on('typing-start', (data) => {
+    socket.to(data.channelId).emit('user-typing', {
+      userId: data.userId,
+      userName: data.userName,
+      channelId: data.channelId
+    });
+  });
+
+  // Handle voice channel joining
+  socket.on('join-voice-channel', (data) => {
+    const { channelId, user } = data;
+    
+    // Leave previous voice channel if any
+    if (socket.voiceChannel) {
+      socket.leave(socket.voiceChannel);
+      // Remove from previous channel's user list
+      if (voiceChannelUsers[socket.voiceChannel]) {
+        voiceChannelUsers[socket.voiceChannel] = voiceChannelUsers[socket.voiceChannel].filter(u => u.socketId !== socket.id);
+      }
+      io.to(socket.voiceChannel).emit('user-left-voice', {
+        socketId: socket.id,
+        channelId: socket.voiceChannel
+      });
+    }
+    
+    // Join new voice channel
+    socket.join(channelId);
+    socket.voiceChannel = channelId;
+    
+    // Add to new channel's user list
+    if (!voiceChannelUsers[channelId]) {
+      voiceChannelUsers[channelId] = [];
+    }
+    voiceChannelUsers[channelId].push({
+      socketId: socket.id,
+      user: user
+    });
+    
+    // Notify others in the channel
+    socket.to(channelId).emit('user-joined-voice', {
+      socketId: socket.id,
+      channelId: channelId,
+      user: user
+    });
+    
+    // Send current voice users to the joining user
+    socket.emit('voice-users', {
+      channelId: channelId,
+      users: voiceChannelUsers[channelId].filter(u => u.socketId !== socket.id)
+    });
+  });
+
+  // Handle voice channel leaving
+  socket.on('leave-voice-channel', (channelId) => {
+    if (socket.voiceChannel === channelId) {
+    socket.leave(channelId);
+      // Remove from channel's user list
     if (voiceChannelUsers[channelId]) {
       voiceChannelUsers[channelId] = voiceChannelUsers[channelId].filter(u => u.socketId !== socket.id);
-      io.to(channelId).emit('voice:users', voiceChannelUsers[channelId]);
-    }
-  });
-
-  // WebRTC signaling
-  socket.on('voice:signal', ({ channelId, to, data }) => {
-    socket.to(to).emit('voice:signal', { from: socket.id, data });
-  });
-
-  socket.on('disconnect', () => {
-    for (const channelId in voiceChannelUsers) {
-      const before = voiceChannelUsers[channelId].length;
-      voiceChannelUsers[channelId] = voiceChannelUsers[channelId].filter(u => u.socketId !== socket.id);
-      if (voiceChannelUsers[channelId].length !== before) {
-        io.to(channelId).emit('voice:users', voiceChannelUsers[channelId]);
       }
+      socket.to(channelId).emit('user-left-voice', {
+        socketId: socket.id,
+        channelId: channelId
+      });
+      socket.voiceChannel = null;
     }
-    console.log('Socket disconnected:', socket.id);
+  });
+
+  // Handle voice signaling
+  socket.on('voice-signal', (data) => {
+    const { channelId, targetSocketId, signal } = data;
+    socket.to(targetSocketId).emit('voice-signal', {
+      from: socket.id,
+      data: signal
+    });
+  });
+
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    // Leave voice channel on disconnect
+    if (socket.voiceChannel) {
+      // Remove from channel's user list
+      if (voiceChannelUsers[socket.voiceChannel]) {
+        voiceChannelUsers[socket.voiceChannel] = voiceChannelUsers[socket.voiceChannel].filter(u => u.socketId !== socket.id);
+      }
+      socket.to(socket.voiceChannel).emit('user-left-voice', {
+        socketId: socket.id,
+        channelId: socket.voiceChannel
+      });
+    }
   });
 });
+
+// Clean up expired typing indicators every 5 seconds
+setInterval(() => {
+  const now = Date.now();
+  for (const channelId in typingUsers) {
+    typingUsers[channelId] = typingUsers[channelId].filter(u => now - u.last < 3000);
+  }
+}, 5000);
 
 app.set('io', io);
 
@@ -94,7 +184,7 @@ const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/taskflow';
 mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => {
     server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+      // Server started successfully
     });
   })
   .catch((err) => {

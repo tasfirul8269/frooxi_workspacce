@@ -37,7 +37,8 @@ import {
   MessageSquare,
   ThumbsUp,
   ThumbsDown,
-  AlertTriangle
+  AlertTriangle,
+  Code
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
@@ -46,6 +47,7 @@ import CreateGroupModal from './CreateChannelModal';
 import MessageComponent from './MessageComponent';
 import EmojiPicker from './EmojiPicker';
 import EditGroupModal from './EditGroupModal';
+import CodeCanvas from './CodeCanvas';
 
 // Audio Visualizer Component
 const AudioVisualizer: React.FC<{ stream: MediaStream | null; isActive: boolean }> = ({ stream, isActive }) => {
@@ -243,6 +245,7 @@ const ChatPage: React.FC = () => {
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [feedbackMessageId, setFeedbackMessageId] = useState<string | null>(null);
+  const [showCodeCanvas, setShowCodeCanvas] = useState(false);
 
   // WebRTC refs
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -635,6 +638,15 @@ const ChatPage: React.FC = () => {
     await unpinMessage(selectedGroup.id);
   };
 
+  const handleSaveCanvas = (code: string, language: string, title: string) => {
+    // Save the canvas as a message with special formatting
+    const canvasMessage = `🎨 **${title}** (${language})\n\`\`\`${language}\n${code}\n\`\`\``;
+    if (selectedGroup) {
+      sendMessage(selectedGroup.id, canvasMessage, undefined, null);
+    }
+    setShowCodeCanvas(false);
+  };
+
   return (
     <div className="h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex overflow-hidden">
       {/* Enhanced Sidebar */}
@@ -943,6 +955,14 @@ const ChatPage: React.FC = () => {
               </div>
               
               <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setShowCodeCanvas(true)}
+                  className="p-3 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-xl transition-all duration-200"
+                  title="Open Code Canvas"
+                >
+                  <Code className="w-5 h-5" />
+                </button>
+                
                 <button 
                   className="p-3 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-xl transition-all duration-200"
                   onClick={() => setShowMembersList(!showMembersList)}
@@ -1053,6 +1073,13 @@ const ChatPage: React.FC = () => {
                   </button>
                   <button className="p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-all duration-200">
                     <File className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => setShowCodeCanvas(true)}
+                    className="p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-all duration-200"
+                    title="Code Canvas"
+                  >
+                    <Code className="w-5 h-5" />
                   </button>
                 </div>
                 
@@ -1176,6 +1203,15 @@ const ChatPage: React.FC = () => {
           onClose={() => setShowEditGroup({ open: false, group: null })} 
         />
       )}
+
+      {/* Code Canvas */}
+      <CodeCanvas
+        isOpen={showCodeCanvas}
+        onClose={() => setShowCodeCanvas(false)}
+        onSave={handleSaveCanvas}
+        groupId={selectedGroup?.id || ''}
+        currentUser={user}
+      />
 
       {/* Feedback Modal */}
       <FeedbackModal

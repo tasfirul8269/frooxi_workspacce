@@ -1,21 +1,5 @@
 import React, { useState } from 'react';
-import { 
-  Reply, 
-  Edit3, 
-  Trash2, 
-  ThumbsUp, 
-  ThumbsDown, 
-  MoreHorizontal,
-  User,
-  Download,
-  Eye,
-  Pin,
-  Heart,
-  Laugh,
-  Angry,
-  Sad,
-  Surprised
-} from 'lucide-react';
+import { Reply, Edit3, Trash2, ThumbsUp, ThumbsDown, MoreHorizontal, User, Download, Eye, Pin, Heart, Laugh, Angry, Salad as Sad, Sunrise as Surprised } from 'lucide-react';
 import { ChatMessage, User as UserType } from '../../types';
 import { useApp } from '../../context/AppContext';
 

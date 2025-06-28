@@ -15,10 +15,14 @@ import {
   CheckSquare,
   MessageSquare,
   AtSign,
-  Calendar
+  Calendar,
+  Sun,
+  Moon,
+  Monitor
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../hooks/useNotifications';
+import { useTheme } from '../../context/ThemeContext';
 import TwoFactorModal from './TwoFactorModal';
 
 const API_URL = '/api';
@@ -26,6 +30,7 @@ const API_URL = '/api';
 const SettingsPage: React.FC = () => {
   const { user, updateProfile } = useAuth();
   const { settings, updateSettings, requestPermission, permission } = useNotifications(user?.id);
+  const { theme, setTheme } = useTheme();
   const [activeTab, setActiveTab] = useState('profile');
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -35,7 +40,6 @@ const SettingsPage: React.FC = () => {
     newPassword: '',
     confirmPassword: '',
     avatar: user?.avatar || '',
-    theme: 'dark',
     language: 'en',
     timezone: 'UTC',
   });
@@ -53,6 +57,30 @@ const SettingsPage: React.FC = () => {
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'preferences', label: 'Preferences', icon: Globe },
     ...(isAdmin ? [{ id: 'system', label: 'System', icon: Database }] : []),
+  ];
+
+  const themeOptions = [
+    { 
+      value: 'dark', 
+      label: 'Dark', 
+      description: 'Dark theme for low-light environments',
+      icon: Moon,
+      preview: 'bg-slate-900 border-slate-700'
+    },
+    { 
+      value: 'light', 
+      label: 'Light', 
+      description: 'Light theme for bright environments',
+      icon: Sun,
+      preview: 'bg-white border-gray-300'
+    },
+    { 
+      value: 'auto', 
+      label: 'System', 
+      description: 'Automatically match your system preference',
+      icon: Monitor,
+      preview: 'bg-gradient-to-r from-slate-900 to-white border-slate-500'
+    },
   ];
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -168,6 +196,12 @@ const SettingsPage: React.FC = () => {
     } finally {
       setUploading(false);
     }
+  };
+
+  const handleThemeChange = (newTheme: 'dark' | 'light' | 'auto') => {
+    setTheme(newTheme);
+    setSaveStatus('success');
+    setTimeout(() => setSaveStatus('idle'), 2000);
   };
 
   return (
@@ -595,24 +629,117 @@ const SettingsPage: React.FC = () => {
 
               {activeTab === 'appearance' && (
                 <div className="space-y-6">
-                  <h3 className="text-lg font-semibold text-white mb-4">Appearance Settings</h3>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white mb-2">Appearance Settings</h3>
+                    <p className="text-gray-400 text-sm mb-6">
+                      Customize how Frooxi Workspace looks and feels
+                    </p>
+                  </div>
                   
-                  <div className="space-y-4">
+                  <div className="space-y-6">
                     <div>
-                      <label htmlFor="theme" className="block text-sm font-medium text-gray-300 mb-2">
-                        Theme
+                      <label className="block text-sm font-medium text-gray-300 mb-4">
+                        <Palette className="w-4 h-4 inline mr-2" />
+                        Theme Preference
                       </label>
-                      <select
-                        id="theme"
-                        name="theme"
-                        value={formData.theme}
-                        onChange={handleChange}
-                        className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      >
-                        <option value="dark">Dark</option>
-                        <option value="light">Light</option>
-                        <option value="auto">Auto (System)</option>
-                      </select>
+                      <div className="grid grid-cols-1 gap-4">
+                        {themeOptions.map((option) => {
+                          const IconComponent = option.icon;
+                          const isSelected = theme === option.value;
+                          
+                          return (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => handleThemeChange(option.value as any)}
+                              className={`relative flex items-center p-4 rounded-xl border-2 transition-all duration-200 ${
+                                isSelected
+                                  ? 'border-purple-500 bg-purple-500/10'
+                                  : 'border-gray-600 hover:border-gray-500 bg-gray-800/30'
+                              }`}
+                            >
+                              <div className="flex items-center space-x-4 flex-1">
+                                <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
+                                  isSelected ? 'bg-purple-600' : 'bg-gray-700'
+                                }`}>
+                                  <IconComponent className="w-6 h-6 text-white" />
+                                </div>
+                                
+                                <div className="flex-1 text-left">
+                                  <h4 className="text-white font-medium">{option.label}</h4>
+                                  <p className="text-gray-400 text-sm">{option.description}</p>
+                                </div>
+                                
+                                <div className={`w-16 h-10 rounded-lg border-2 ${option.preview}`}></div>
+                              </div>
+                              
+                              {isSelected && (
+                                <div className="absolute top-2 right-2">
+                                  <div className="w-6 h-6 bg-purple-600 rounded-full flex items-center justify-center">
+                                    <CheckSquare className="w-4 h-4 text-white" />
+                                  </div>
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Theme Preview */}
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <h4 className="text-white font-medium mb-3">Preview</h4>
+                      <div className="bg-gray-800 rounded-lg p-4 border border-gray-600">
+                        <div className="flex items-center space-x-3 mb-3">
+                          <div className="w-8 h-8 bg-purple-600 rounded-full"></div>
+                          <div>
+                            <div className="text-white font-medium">Sample Message</div>
+                            <div className="text-gray-400 text-sm">This is how your interface will look</div>
+                          </div>
+                        </div>
+                        <div className="bg-gray-700 rounded p-2 text-gray-300 text-sm">
+                          Your current theme: <span className="font-medium text-purple-400">{themeOptions.find(t => t.value === theme)?.label}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Additional Appearance Options */}
+                    <div className="space-y-4">
+                      <h4 className="text-white font-medium">Additional Options</h4>
+                      
+                      <div className="bg-gray-700/30 rounded-lg p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h5 className="text-white font-medium text-sm">Compact Mode</h5>
+                            <p className="text-xs text-gray-400">Reduce spacing for more content</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="sr-only peer"
+                              defaultChecked={false}
+                            />
+                            <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="bg-gray-700/30 rounded-lg p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h5 className="text-white font-medium text-sm">Animations</h5>
+                            <p className="text-xs text-gray-400">Enable smooth transitions and animations</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="sr-only peer"
+                              defaultChecked={true}
+                            />
+                            <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                          </label>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -698,7 +825,7 @@ const SettingsPage: React.FC = () => {
               )}
 
               {/* Save Button */}
-              {activeTab !== 'security' && (
+              {activeTab !== 'security' && activeTab !== 'appearance' && (
                 <div className="flex justify-end pt-6 border-t border-gray-700">
                   <button
                     type="submit"
@@ -708,7 +835,6 @@ const SettingsPage: React.FC = () => {
                     <span>
                       {activeTab === 'profile' && 'Save Profile'}
                       {activeTab === 'notifications' && 'Save Notifications'}
-                      {activeTab === 'appearance' && 'Save Appearance'}
                       {activeTab === 'preferences' && 'Save Preferences'}
                       {activeTab === 'system' && 'Save System Settings'}
                     </span>
@@ -717,7 +843,6 @@ const SettingsPage: React.FC = () => {
                     <span className="ml-4 text-green-400">
                       {activeTab === 'profile' && 'Profile updated!'}
                       {activeTab === 'notifications' && 'Notification settings saved!'}
-                      {activeTab === 'appearance' && 'Appearance settings saved!'}
                       {activeTab === 'preferences' && 'Preferences saved!'}
                       {activeTab === 'system' && 'System settings saved!'}
                     </span>
@@ -725,6 +850,13 @@ const SettingsPage: React.FC = () => {
                   {saveStatus === 'error' && (
                     <span className="ml-4 text-red-400">Failed to save changes.</span>
                   )}
+                </div>
+              )}
+
+              {/* Success message for appearance changes */}
+              {activeTab === 'appearance' && saveStatus === 'success' && (
+                <div className="flex justify-end">
+                  <span className="text-green-400">Theme updated successfully!</span>
                 </div>
               )}
             </form>

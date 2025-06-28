@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider } from './context/AppContext';
+import { ThemeProvider } from './context/ThemeContext';
 import LandingPage from './components/Landing/LandingPage';
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
@@ -69,15 +70,17 @@ function AppRoutes() {
 
 function App() {
   return (
-    <ToastProvider>
-      <Router>
-        <AuthProvider>
-          <AppProvider>
-            <AppRoutes />
-          </AppProvider>
-        </AuthProvider>
-      </Router>
-    </ToastProvider>
+    <ThemeProvider>
+      <ToastProvider>
+        <Router>
+          <AuthProvider>
+            <AppProvider>
+              <AppRoutes />
+            </AppProvider>
+          </AuthProvider>
+        </Router>
+      </ToastProvider>
+    </ThemeProvider>
   );
 }
 

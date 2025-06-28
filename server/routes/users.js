@@ -4,6 +4,8 @@ const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const Role = require('../models/Role');
 const Organization = require('../models/Organization');
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
 
 const router = express.Router();
 
@@ -126,6 +128,277 @@ router.delete('/:id', auth, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ message: 'Failed to delete user', error: err.message });
+  }
+});
+
+// Change password
+router.put('/change-password', auth, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current password and new password are required' });
+    }
+
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Verify current password
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Current password is incorrect' });
+    }
+
+    // Hash new password
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedNewPassword;
+    await user.save();
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to change password', error: err.message });
+  }
+});
+
+// Setup 2FA - Generate secret and QR code
+router.post('/2fa/setup', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (user.twoFactorEnabled) {
+      return res.status(400).json({ message: '2FA is already enabled' });
+    }
+
+    // Generate secret
+    const secret = speakeasy.generateSecret({
+      name: `Frooxi Workspace (${user.email})`,
+      issuer: 'Frooxi Workspace',
+    });
+
+    // Generate QR code
+    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
+
+    // Generate backup codes
+    const backupCodes = Array.from({ length: 10 }, () => 
+      Math.random().toString(36).substring(2, 8).toUpperCase()
+    );
+
+    // Save secret and backup codes (but don't enable yet)
+    user.twoFactorSecret = secret.base32;
+    user.twoFactorBackupCodes = backupCodes;
+    await user.save();
+
+    res.json({
+      secret: secret.base32,
+      qrCode: qrCodeUrl,
+      backupCodes,
+      message: '2FA setup initiated. Please verify with a code to enable.'
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to setup 2FA', error: err.message });
+  }
+});
+
+// Verify and enable 2FA
+router.post('/2fa/verify', auth, async (req, res) => {
+  try {
+    const { token } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({ message: 'Token is required' });
+    }
+
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.twoFactorSecret) {
+      return res.status(400).json({ message: '2FA not set up. Please setup first.' });
+    }
+
+    if (user.twoFactorEnabled) {
+      return res.status(400).json({ message: '2FA is already enabled' });
+    }
+
+    // Verify token
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token: token,
+      window: 2 // Allow 2 time steps tolerance
+    });
+
+    if (!verified) {
+      return res.status(400).json({ message: 'Invalid token' });
+    }
+
+    // Enable 2FA
+    user.twoFactorEnabled = true;
+    await user.save();
+
+    res.json({ 
+      message: '2FA enabled successfully',
+      backupCodes: user.twoFactorBackupCodes
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to verify 2FA', error: err.message });
+  }
+});
+
+// Disable 2FA
+router.post('/2fa/disable', auth, async (req, res) => {
+  try {
+    const { token } = req.body;
+    
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.twoFactorEnabled) {
+      return res.status(400).json({ message: '2FA is not enabled' });
+    }
+
+    // Verify token before disabling
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token: token,
+      window: 2
+    });
+
+    if (!verified) {
+      return res.status(400).json({ message: 'Invalid token' });
+    }
+
+    // Disable 2FA
+    user.twoFactorEnabled = false;
+    user.twoFactorSecret = null;
+    user.twoFactorBackupCodes = [];
+    await user.save();
+
+    res.json({ message: '2FA disabled successfully' });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to disable 2FA', error: err.message });
+  }
+});
+
+// Get 2FA status
+router.get('/2fa/status', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
+      enabled: user.twoFactorEnabled,
+      hasSecret: !!user.twoFactorSecret,
+      hasBackupCodes: user.twoFactorBackupCodes && user.twoFactorBackupCodes.length > 0
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to get 2FA status', error: err.message });
+  }
+});
+
+// Verify 2FA token (for login)
+router.post('/2fa/verify-login', async (req, res) => {
+  try {
+    const { email, token } = req.body;
+    
+    if (!email || !token) {
+      return res.status(400).json({ message: 'Email and token are required' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.twoFactorEnabled) {
+      return res.status(400).json({ message: '2FA is not enabled for this user' });
+    }
+
+    // Check if it's a backup code
+    if (user.twoFactorBackupCodes.includes(token)) {
+      // Remove used backup code
+      user.twoFactorBackupCodes = user.twoFactorBackupCodes.filter(code => code !== token);
+      await user.save();
+      
+      // Get organization data if user has one
+      let organization = null;
+      if (user.organizationId) {
+        organization = await Organization.findById(user.organizationId);
+      }
+      
+      // Generate JWT token
+      const jwtToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      return res.json({ 
+        token: jwtToken, 
+        user: { 
+          id: user._id, 
+          name: user.name, 
+          email: user.email, 
+          role: user.role,
+          organizationId: user.organizationId 
+        },
+        organization: organization ? {
+          id: organization._id,
+          name: organization.name,
+          slug: organization.slug,
+          plan: organization.plan,
+          status: organization.status
+        } : null,
+        message: 'Login successful with backup code'
+      });
+    }
+
+    // Verify TOTP token
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token: token,
+      window: 2
+    });
+
+    if (!verified) {
+      return res.status(400).json({ message: 'Invalid token' });
+    }
+
+    // Get organization data if user has one
+    let organization = null;
+    if (user.organizationId) {
+      organization = await Organization.findById(user.organizationId);
+    }
+
+    // Generate JWT token
+    const jwtToken = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    res.json({ 
+      token: jwtToken, 
+      user: { 
+        id: user._id, 
+        name: user.name, 
+        email: user.email, 
+        role: user.role,
+        organizationId: user.organizationId 
+      },
+      organization: organization ? {
+        id: organization._id,
+        name: organization.name,
+        slug: organization.slug,
+        plan: organization.plan,
+        status: organization.status
+      } : null,
+      message: 'Login successful'
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to verify 2FA', error: err.message });
   }
 });
 

@@ -1,7 +1,10 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Task, Role, Meeting, User, Activity, ChatMessage, Group } from '../types';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { io, Socket } from 'socket.io-client';
+import { Task, Role, Meeting, User, ChatMessage, Group, Activity } from '../types';
+import { useNotifications } from '../hooks/useNotifications';
 import { useAuth } from './AuthContext';
-import { io as socketIOClient, Socket } from 'socket.io-client';
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 interface AppContextType {
   tasks: Task[];
@@ -58,23 +61,28 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { organization, user } = useAuth();
+  const { user, organization } = useAuth();
   
   const [tasks, setTasks] = useState<Task[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [currentChannel, setCurrentChannel] = useState<string>('');
-  const [typingUsers, setTypingUsers] = useState<{ [channelId: string]: { userId: string; userName: string; last: number }[] }>({});
-  const [lastReadBy, setLastReadBy] = useState<{ [channelId: string]: { userId: string; lastReadMessageId: string }[] }>({});
-  const [voiceUsers, setVoiceUsers] = useState<{ [channelId: string]: { socketId: string; id: string; name: string; avatar?: string }[] }>({});
   const [groups, setGroups] = useState<Group[]>([]);
-  const prevChannelRef = React.useRef<string | null>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [typingUsers, setTypingUsers] = useState<{ [groupId: string]: { userId: string; userName: string; last: number }[] }>({});
+  const [lastReadBy, setLastReadBy] = useState<{ [groupId: string]: { userId: string; lastReadMessageId: string }[] }>({});
+  const [voiceUsers, setVoiceUsers] = useState<{ [groupId: string]: { socketId: string; id: string; name: string; avatar?: string }[] }>({});
+  
+  // Use notifications hook
+  const { 
+    notifyTaskUpdate, 
+    notifyNewMessage, 
+    notifyMention, 
+    notifyMeetingReminder, 
+    notifyTaskReminder 
+  } = useNotifications(user?.id);
 
   // Fetch tasks from backend
   const fetchTasks = async () => {
@@ -113,6 +121,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       body: JSON.stringify(updates),
     });
     await fetchTasks();
+    
+    // Notify task assignee about update
+    const task = tasks.find(t => t.id === taskId);
+    if (task && task.assigneeId && task.assigneeId !== user?.id) {
+      const taskAssignee = users.find(u => u.id === task.assigneeId);
+      if (taskAssignee) {
+        const action = updates.status ? `status changed to ${updates.status}` : 'updated';
+        // The notification hook will automatically get the target user's settings
+        notifyTaskUpdate(task.title, action, taskAssignee.email, taskAssignee.id);
+      }
+    }
   };
 
   // Delete task via backend
@@ -139,7 +158,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Create role via backend
+  // Add role via backend
   const addRole = async (roleData: Omit<Role, 'id'>) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
@@ -215,27 +234,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Create user via backend
   const createUser = async (userData: any) => {
     const token = localStorage.getItem('frooxi_token');
-    if (!token) return { success: false, message: 'Not authenticated' };
+    if (!token) return { success: false, message: 'No token' };
     const res = await fetch(`${API_URL}/users`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify(userData),
     });
     if (res.ok) {
+      await fetchUsers();
       return { success: true };
     } else {
-      const data = await res.json();
-      return { success: false, message: data.message };
+      const error = await res.json();
+      return { success: false, message: error.message };
     }
   };
 
+  // Fetch messages from backend
   const fetchMessages = async (channelId: string) => {
-    // Leave previous channel room if switching
-    if (socket && prevChannelRef.current && prevChannelRef.current !== channelId) {
-      socket.emit('leave-channel', prevChannelRef.current);
-    }
-    setCurrentChannel(channelId);
-    prevChannelRef.current = channelId;
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
     const res = await fetch(`${API_URL}/chat/channels/${channelId}/messages`, {
@@ -243,25 +258,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     if (res.ok) {
       const data = await res.json();
-      setMessages(data.messages.map((m: any) => ({ ...m, id: m._id })));
+      setMessages(data.messages.map((msg: any) => ({ ...msg, id: msg._id })));
     }
   };
 
+  // Send message via backend
   const sendMessage = async (channelId: string, content: string, attachment?: any, replyTo?: string | null) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    await fetch(`${API_URL}/chat/channels/${channelId}/messages`, {
+    const res = await fetch(`${API_URL}/chat/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ content, attachment, replyTo }),
     });
-    await fetchMessages(channelId);
+    if (res.ok) {
+      await fetchMessages(channelId);
+      
+      // Check for mentions and notify
+      const mentionRegex = /@(\w+)/g;
+      const mentions = content.match(mentionRegex);
+      if (mentions) {
+        mentions.forEach(mention => {
+          const username = mention.substring(1);
+          const mentionedUser = users.find(u => u.name.toLowerCase().includes(username.toLowerCase()));
+          if (mentionedUser && mentionedUser.id !== user?.id) {
+            const channel = groups.find(g => g.id === channelId);
+            // The notification hook will automatically get the target user's settings
+            notifyMention(user?.name || 'Someone', channel?.name || 'a channel', content, mentionedUser.email, mentionedUser.id);
+          }
+        });
+      }
+      
+      // Notify other users in the channel (excluding the sender)
+      const channel = groups.find(g => g.id === channelId);
+      if (channel) {
+        const otherUsers = users.filter(u => 
+          u.id !== user?.id && 
+          channel.members?.includes(u.id)
+        );
+        
+        otherUsers.forEach(otherUser => {
+          // The notification hook will automatically get the target user's settings
+          notifyNewMessage(user?.name || 'Someone', channel.name, content, otherUser.email, otherUser.id);
+        });
+      }
+    }
   };
 
-  // Create meeting via backend
+  // Schedule meeting via backend
   const scheduleMeeting = async (meetingData: Omit<Meeting, 'id'>) => {
     const token = localStorage.getItem('frooxi_token');
-    if (!token || !organization) return;
+    if (!token) return;
     const res = await fetch(`${API_URL}/meetings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -269,6 +316,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     if (res.ok) {
       await fetchMeetings();
+      
+      // Notify meeting attendees
+      if (meetingData.attendees) {
+        meetingData.attendees.forEach((attendeeId: string) => {
+          const attendee = users.find(u => u.id === attendeeId);
+          if (attendee && attendee.id !== user?.id) {
+            // The notification hook will automatically get the target user's settings
+            notifyMeetingReminder(meetingData.title, new Date(meetingData.startTime), attendee.email, attendee.id);
+          }
+        });
+      }
     }
   };
 
@@ -446,17 +504,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   useEffect(() => {
-    if (organization) {
+    if (user?.id && organization?.id) {
       fetchRoles();
       fetchUsers();
       fetchTasks();
       fetchMeetings();
       fetchGroups();
     }
-  }, [organization]);
+  }, [user?.id, organization?.id]);
 
   useEffect(() => {
-    const s = socketIOClient(API_URL.replace('/api', ''));
+    if (!user?.id) return;
+    
+    const s = io(API_URL.replace('/api', ''));
     setSocket(s);
     
     // Authenticate user when socket connects
@@ -467,13 +527,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     
     return () => { s.disconnect(); };
-  }, [user]);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!socket) return;
-    if (currentChannel) {
-      socket.emit('join-channel', currentChannel);
-    }
+    
     const handleNewMessage = (msg: any) => {
       setMessages(prev => [...prev, { ...msg, id: msg._id || msg.id }]);
     };
@@ -551,6 +609,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ));
     };
 
+    // Handle new notifications
+    const handleNewNotification = (notification: any) => {
+      console.log('📧 Received notification via WebSocket:', notification);
+      console.log(' Current user ID:', user?.id);
+      console.log('📧 Notification target user ID:', notification.userId);
+      
+      // Only process notifications meant for the current user
+      if (notification.userId === user?.id) {
+        // Dispatch custom event for useNotifications hook
+        window.dispatchEvent(new CustomEvent('notification:new', {
+          detail: notification
+        }));
+      } else {
+        console.log('📧 Ignoring notification - not for current user');
+      }
+    };
+
     socket.on('chat:new_message', handleNewMessage);
     socket.on('chat:edit_message', handleEditMessage);
     socket.on('chat:delete_message', handleDeleteMessage);
@@ -562,6 +637,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     socket.on('user-left-voice', handleUserLeftVoice);
     socket.on('voice-signal', handleVoiceSignal);
     socket.on('group:pin', handleGroupPin);
+    socket.on('notification:new', handleNewNotification);
     
     return () => {
       socket.off('chat:new_message', handleNewMessage);
@@ -575,8 +651,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       socket.off('user-left-voice', handleUserLeftVoice);
       socket.off('voice-signal', handleVoiceSignal);
       socket.off('group:pin', handleGroupPin);
+      socket.off('notification:new', handleNewNotification);
     };
-  }, [socket, currentChannel]);
+  }, [socket, user?.id]);
 
   // Remove typing users after 3s
   useEffect(() => {
@@ -642,16 +719,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // No need to refetch, socket will update
   };
 
-  // Add a comment to a task
+  // Add comment to task
   const addComment = async (taskId: string, content: string) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    await fetch(`${API_URL}/tasks/${taskId}/comments`, {
+    const res = await fetch(`${API_URL}/tasks/${taskId}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ content }),
     });
-    await fetchTasks();
+    if (res.ok) {
+      await fetchTasks();
+      
+      // Notify task assignee about new comment
+      const task = tasks.find(t => t.id === taskId);
+      if (task && task.assigneeId && task.assigneeId !== user?.id) {
+        const taskAssignee = users.find(u => u.id === task.assigneeId);
+        if (taskAssignee) {
+          // Get target user's notification settings
+          const getUserNotificationSettings = (userId: string) => {
+            try {
+              const stored = localStorage.getItem(`frooxi_notification_settings_${userId}`);
+              if (stored) {
+                return JSON.parse(stored);
+              }
+            } catch (error) {
+              console.error('Failed to parse user notification settings:', error);
+            }
+            
+            return {
+              email: true,
+              push: true,
+              taskUpdates: true,
+              mentions: true,
+              meetings: true,
+              chatMessages: true,
+            };
+          };
+          
+          const targetUserSettings = getUserNotificationSettings(taskAssignee.id);
+          notifyTaskUpdate(task.title, 'commented on', taskAssignee.email, taskAssignee.id, targetUserSettings);
+        }
+      }
+    }
   };
 
   // Delete a comment from a task
@@ -687,6 +797,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     await fetchTasks();
   };
+
+  // Set up task reminders
+  useEffect(() => {
+    const checkTaskReminders = () => {
+      const now = new Date();
+      tasks.forEach(task => {
+        if (task.dueDate && task.status !== 'completed') {
+          const dueDate = new Date(task.dueDate);
+          const timeDiff = dueDate.getTime() - now.getTime();
+          const daysDiff = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+          
+          // Notify if due within 24 hours and not already notified today
+          if (daysDiff <= 1 && daysDiff > 0) {
+            const lastNotified = localStorage.getItem(`task_reminder_${task.id}`);
+            const today = new Date().toDateString();
+            
+            if (lastNotified !== today) {
+              // Get target user's notification settings
+              const getUserNotificationSettings = (userId: string) => {
+                try {
+                  const stored = localStorage.getItem(`frooxi_notification_settings_${userId}`);
+                  if (stored) {
+                    return JSON.parse(stored);
+                  }
+                } catch (error) {
+                  console.error('Failed to parse user notification settings:', error);
+                }
+                
+                return {
+                  email: true,
+                  push: true,
+                  taskUpdates: true,
+                  mentions: true,
+                  meetings: true,
+                  chatMessages: true,
+                };
+              };
+              
+              const targetUserSettings = getUserNotificationSettings(user?.id || '');
+              notifyTaskReminder(task.title, dueDate, user?.email, user?.id, targetUserSettings);
+              localStorage.setItem(`task_reminder_${task.id}`, today);
+            }
+          }
+        }
+      });
+    };
+    
+    // Check reminders every hour
+    const interval = setInterval(checkTaskReminders, 60 * 60 * 1000);
+    checkTaskReminders(); // Check immediately on mount
+    
+    return () => clearInterval(interval);
+  }, [tasks, user?.id, notifyTaskReminder]);
 
   return (
     <AppContext.Provider value={{

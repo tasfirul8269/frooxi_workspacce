@@ -5,6 +5,7 @@ interface AuthContextType {
   user: User | null;
   organization: Organization | null;
   login: (email: string, password: string) => Promise<{ success: boolean; redirectTo?: string }>;
+  complete2FALogin: (token: string, userData: any, organizationData?: any) => Promise<{ success: boolean }>;
   signup: (userData: { name: string; email: string; password: string; organizationName: string }) => Promise<{ success: boolean; redirectTo?: string }>;
   logout: () => void;
   updateProfile: (profile: { name?: string; email?: string; avatar?: string }) => Promise<{ success: boolean }>;
@@ -16,7 +17,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = '/api';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -52,7 +53,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
+      
+      // Check if 2FA is required
+      if (data.requires2FA) {
+        throw { requires2FA: true, email: data.email };
+      }
+      
       if (!res.ok) return { success: false };
+      
       const userData = { ...data.user, id: data.user._id };
       setUser(userData);
       localStorage.setItem('frooxi_user', JSON.stringify(userData));
@@ -69,7 +77,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return { success: true };
     } catch (err) {
-    return { success: false };
+      // Re-throw 2FA errors
+      if (err && typeof err === 'object' && 'requires2FA' in err) {
+        throw err;
+      }
+      return { success: false };
+    }
+  };
+
+  // Handle 2FA login completion
+  const complete2FALogin = async (token: string, userData: any, organizationData?: any) => {
+    try {
+      const userObj = { ...userData, id: userData.id || userData._id };
+      setUser(userObj);
+      localStorage.setItem('frooxi_user', JSON.stringify(userObj));
+      localStorage.setItem('frooxi_token', token);
+      
+      // Handle organization data if provided
+      if (organizationData) {
+        const orgObj = { ...organizationData, id: organizationData.id || organizationData._id };
+        setOrganization(orgObj);
+        localStorage.setItem('frooxi_organization', JSON.stringify(orgObj));
+      }
+      
+      return { success: true };
+    } catch (err) {
+      console.error('Error completing 2FA login:', err);
+      return { success: false };
     }
   };
 
@@ -130,6 +164,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user,
       organization,
       login,
+      complete2FALogin,
       signup,
       logout,
       updateProfile,

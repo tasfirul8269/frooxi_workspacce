@@ -12,6 +12,7 @@ import CalendarView from './components/Calendar/CalendarView';
 import SettingsPage from './components/Settings/SettingsPage';
 import SuperAdminDashboard from './components/SuperAdmin/SuperAdminDashboard';
 import ChatPage from './components/Chat/ChatPage';
+import { ToastProvider } from './components/Team/TeamManagement';
 
 function OrgLayout() {
   const { orgSlug } = useParams();
@@ -59,6 +60,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={isAuthenticated && organization ? <Navigate to={`/${organization.slug}/dashboard`} replace /> : <LandingPage />} />
+      <Route path="/super-admin" element={<SuperAdminDashboard />} />
       <Route path=":orgSlug/*" element={<OrgLayout />} />
       <Route path="*" element={<Navigate to={isAuthenticated && organization ? `/${organization.slug}/dashboard` : '/'} replace />} />
     </Routes>
@@ -67,13 +69,15 @@ function AppRoutes() {
 
 function App() {
   return (
-    <Router>
-      <AuthProvider>
-        <AppProvider>
-          <AppRoutes />
-        </AppProvider>
-      </AuthProvider>
-    </Router>
+    <ToastProvider>
+      <Router>
+        <AuthProvider>
+          <AppProvider>
+            <AppRoutes />
+          </AppProvider>
+        </AuthProvider>
+      </Router>
+    </ToastProvider>
   );
 }
 

@@ -80,6 +80,16 @@ router.post('/login', async (req, res) => {
     if (!user) return res.status(400).json({ message: 'Invalid credentials.' });
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ message: 'Invalid credentials.' });
+    
+    // Check if 2FA is enabled
+    if (user.twoFactorEnabled) {
+      return res.status(200).json({ 
+        requires2FA: true, 
+        message: '2FA token required',
+        email: user.email 
+      });
+    }
+    
     const org = user.organizationId ? await Organization.findById(user.organizationId) : null;
     const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.json({ token, user, organization: org });

@@ -24,27 +24,38 @@ app.get('/', (req, res) => {
 });
 
 // Auth routes
-app.use('/api/auth', require('./routes/auth'));
+const authRoutes = require('./routes/auth');
+app.use('/api/auth', authRoutes);
 
 // TODO: Add auth routes here
 
 // Upload routes
-app.use('/api/upload', require('./routes/upload'));
+const uploadRoutes = require('./routes/upload');
+app.use('/api/upload', uploadRoutes);
 
 // Users routes
-app.use('/api/users', require('./routes/users'));
+const userRoutes = require('./routes/users');
+app.use('/api/users', userRoutes);
 
 // Roles routes
-app.use('/api/roles', require('./routes/roles'));
+const roleRoutes = require('./routes/roles');
+app.use('/api/roles', roleRoutes);
 
 // Tasks routes
-app.use('/api/tasks', require('./routes/tasks'));
+const taskRoutes = require('./routes/tasks');
+app.use('/api/tasks', taskRoutes);
 
 // Chat routes
-app.use('/api/chat', require('./routes/chat'));
+const chatRoutes = require('./routes/chat');
+app.use('/api/chat', chatRoutes);
 
-const meetingsRoute = require('./routes/meetings');
-app.use('/api/meetings', meetingsRoute);
+// Meetings routes
+const meetingRoutes = require('./routes/meetings');
+app.use('/api/meetings', meetingRoutes);
+
+// Notifications routes
+const notificationRoutes = require('./routes/notifications');
+app.use('/api/notifications', notificationRoutes);
 
 const voiceChannelUsers = {};
 const typingUsers = {};
@@ -57,6 +68,12 @@ io.on('connection', (socket) => {
   // Handle user authentication
   socket.on('authenticate', (userData) => {
     socket.user = userData;
+    
+    // Join user to their personal notification room
+    if (userData.id) {
+      socket.join(`user_${userData.id}`);
+      console.log(`👤 User ${userData.name} (${userData.id}) joined notification room`);
+    }
   });
 
   // Handle joining chat channels

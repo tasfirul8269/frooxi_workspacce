@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import TwoFactorVerification from './TwoFactorVerification';
 
 interface LoginFormProps {
   onToggleForm: () => void;
@@ -13,27 +14,72 @@ const LoginForm: React.FC<LoginFormProps> = ({ onToggleForm }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const { login } = useAuth();
+  const [requires2FA, setRequires2FA] = useState(false);
+  const [twoFactorEmail, setTwoFactorEmail] = useState('');
+  const { login, complete2FALogin } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
     setError('');
+    setLoading(true);
 
     try {
       const result = await login(email, password);
-      if (!result.success) {
+      
+      if (result.success) {
+        if (result.redirectTo) {
+          navigate(result.redirectTo, { replace: true });
+        }
+      } else {
         setError('Invalid email or password');
-      } else if (result.redirectTo) {
-        navigate(result.redirectTo, { replace: true });
       }
-    } catch (err) {
-      setError('An error occurred. Please try again.');
+    } catch (err: any) {
+      if (err.requires2FA) {
+        setRequires2FA(true);
+        setTwoFactorEmail(err.email);
+      } else {
+        setError('Invalid email or password');
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  const handle2FASuccess = async (token: string, user: any, organization?: any) => {
+    try {
+      const result = await complete2FALogin(token, user, organization);
+      if (result.success) {
+        // Determine redirect based on user role and organization
+        if (user.role === 'super_admin') {
+          navigate('/super-admin', { replace: true });
+        } else if (organization && organization.slug) {
+          navigate(`/${organization.slug}`, { replace: true });
+        } else {
+          navigate('/dashboard', { replace: true });
+        }
+      } else {
+        setError('Failed to complete login');
+      }
+    } catch (err) {
+      setError('Failed to complete login');
+    }
+  };
+
+  const handle2FABack = () => {
+    setRequires2FA(false);
+    setTwoFactorEmail('');
+  };
+
+  if (requires2FA) {
+    return (
+      <TwoFactorVerification
+        email={twoFactorEmail}
+        onBack={handle2FABack}
+        onSuccess={handle2FASuccess}
+      />
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -46,9 +92,9 @@ const LoginForm: React.FC<LoginFormProps> = ({ onToggleForm }) => {
           id="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          required
           className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
           placeholder="Enter your email"
-          required
         />
       </div>
 
@@ -62,9 +108,9 @@ const LoginForm: React.FC<LoginFormProps> = ({ onToggleForm }) => {
             id="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            required
             className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-12"
             placeholder="Enter your password"
-            required
           />
           <button
             type="button"
@@ -108,16 +154,6 @@ const LoginForm: React.FC<LoginFormProps> = ({ onToggleForm }) => {
             Create organization
           </button>
         </p>
-      </div>
-
-      <div className="mt-6 p-4 bg-gray-800 rounded-lg">
-        <p className="text-sm text-gray-300 mb-2">Demo Accounts:</p>
-        <div className="space-y-1 text-xs text-gray-400">
-          <p><strong>Super Admin:</strong> super@frooxi.com / admin123</p>
-          <p><strong>TechCorp Admin:</strong> john@techcorp.com / admin123</p>
-          <p><strong>TechCorp Employee:</strong> sarah@techcorp.com / employee123</p>
-          <p><strong>StartupXYZ Admin:</strong> mike@startupxyz.com / admin123</p>
-        </div>
       </div>
     </form>
   );

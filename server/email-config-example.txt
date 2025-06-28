@@ -1,0 +1,18 @@
+# Email Configuration for Namecheap cPanel
+# Add these to your .env file:
+
+SMTP_HOST=mail.yourdomain.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=noreply@yourdomain.com
+SMTP_PASS=your-email-password
+SMTP_FROM=noreply@yourdomain.com
+SMTP_SENDER_NAME=Frooxi Workspace
+
+# Instructions:
+# 1. Replace 'yourdomain.com' with your actual domain
+# 2. Replace 'noreply@yourdomain.com' with your email address
+# 3. Replace 'your-email-password' with your email password
+# 4. Common ports: 587 (TLS), 465 (SSL), 25 (unsecured)
+# 5. SMTP_SECURE: true for port 465, false for others
+# 6. SMTP_SENDER_NAME: The name that will appear as the sender (defaults to "Frooxi Workspace") 

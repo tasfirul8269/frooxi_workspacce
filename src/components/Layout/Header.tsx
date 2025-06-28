@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Search, Bell, Settings as SettingsIcon } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useNotifications } from '../../hooks/useNotifications';
+import NotificationCenter from '../Notifications/NotificationCenter';
 
 interface HeaderProps {
   title: string;
@@ -8,6 +10,8 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ title }) => {
   const { user } = useAuth();
+  const { notifications, unreadCount } = useNotifications(user?.id);
+  const [showNotificationCenter, setShowNotificationCenter] = useState(false);
 
   return (
     <header className="bg-gray-900 border-b border-gray-700 px-6 py-4">
@@ -29,10 +33,19 @@ const Header: React.FC<HeaderProps> = ({ title }) => {
             />
           </div>
 
-          <button className="relative p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
-            <Bell className="w-5 h-5" />
-            <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full"></span>
-          </button>
+          <div className="relative">
+            <button 
+              className="relative p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors" 
+              onClick={() => setShowNotificationCenter(true)}
+            >
+              <Bell className="w-5 h-5" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-xs flex items-center justify-center text-white">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </button>
+          </div>
 
           <button className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
             <SettingsIcon className="w-5 h-5" />
@@ -47,6 +60,12 @@ const Header: React.FC<HeaderProps> = ({ title }) => {
           </div>
         </div>
       </div>
+      
+      {/* Notification Center */}
+      <NotificationCenter 
+        isOpen={showNotificationCenter} 
+        onClose={() => setShowNotificationCenter(false)} 
+      />
     </header>
   );
 };

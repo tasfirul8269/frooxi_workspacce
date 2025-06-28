@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, createContext, useContext } from 'react';
 import { 
   Users, 
   Plus, 
@@ -23,6 +23,25 @@ import EditUserModal from './EditUserModal';
 import EditRoleModal from './EditRoleModal';
 import DeleteRoleConfirmModal from './DeleteRoleConfirmModal';
 
+// Toast context and hook
+const ToastContext = createContext<any>(null);
+export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const toastTimeout = useRef<NodeJS.Timeout | null>(null);
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+    if (toastTimeout.current) clearTimeout(toastTimeout.current);
+    toastTimeout.current = setTimeout(() => setToast(null), 3000);
+  };
+  useEffect(() => () => { if (toastTimeout.current) clearTimeout(toastTimeout.current); }, []);
+  return (
+    <ToastContext.Provider value={{ toast, showToast }}>
+      {children}
+    </ToastContext.Provider>
+  );
+};
+export const useToast = () => useContext(ToastContext);
+
 const TeamManagement: React.FC = () => {
   const { user } = useAuth();
   const { users, roles, deleteUser: deleteUserApi, editUser: editUserApi, editRole, deleteRole } = useApp();
@@ -38,8 +57,6 @@ const TeamManagement: React.FC = () => {
   const [deleteRoleModal, setDeleteRoleModal] = useState<null | typeof roles[0]>(null);
   const [roleEditing, setRoleEditing] = useState(false);
   const [roleDeleting, setRoleDeleting] = useState(false);
-  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const toastTimeout = useRef<NodeJS.Timeout | null>(null);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
@@ -73,18 +90,6 @@ const TeamManagement: React.FC = () => {
         return 'bg-gray-600/20 text-gray-400';
     }
   };
-
-  const showToast = (type: 'success' | 'error', message: string) => {
-    setToast({ type, message });
-    if (toastTimeout.current) clearTimeout(toastTimeout.current);
-    toastTimeout.current = setTimeout(() => setToast(null), 3000);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (toastTimeout.current) clearTimeout(toastTimeout.current);
-    };
-  }, []);
 
   return (
     <div className="space-y-6">
@@ -318,9 +323,9 @@ const TeamManagement: React.FC = () => {
             setDeleting(true);
             try {
               await deleteUserApi(deleteUser.id);
-              showToast('success', 'User removed successfully.');
+              useToast().showToast('success', 'User removed successfully.');
             } catch (err) {
-              showToast('error', 'Failed to remove user.');
+              useToast().showToast('error', 'Failed to remove user.');
             }
             setDeleting(false);
             setDeleteUser(null);
@@ -339,9 +344,9 @@ const TeamManagement: React.FC = () => {
             setEditing(true);
             try {
               await editUserApi(editUser.id, updates);
-              showToast('success', 'User updated successfully.');
+              useToast().showToast('success', 'User updated successfully.');
             } catch (err) {
-              showToast('error', 'Failed to update user.');
+              useToast().showToast('error', 'Failed to update user.');
             }
             setEditing(false);
             setEditUser(null);
@@ -359,9 +364,9 @@ const TeamManagement: React.FC = () => {
             setRoleEditing(true);
             try {
               await editRole(editRoleModal.id, updates);
-              showToast('success', 'Role updated successfully.');
+              useToast().showToast('success', 'Role updated successfully.');
             } catch (err) {
-              showToast('error', 'Failed to update role.');
+              useToast().showToast('error', 'Failed to update role.');
             }
             setRoleEditing(false);
             setEditRoleModal(null);
@@ -379,16 +384,16 @@ const TeamManagement: React.FC = () => {
             // Prevent deleting a role if any user is assigned to it
             const usersWithRole = users.filter(u => u.role === deleteRoleModal?.name);
             if (usersWithRole.length > 0) {
-              showToast('error', 'Cannot delete role: users are assigned to this role.');
+              useToast().showToast('error', 'Cannot delete role: users are assigned to this role.');
               setDeleteRoleModal(null);
               return;
             }
             setRoleDeleting(true);
             try {
               await deleteRole(deleteRoleModal.id);
-              showToast('success', 'Role deleted successfully.');
+              useToast().showToast('success', 'Role deleted successfully.');
             } catch (err) {
-              showToast('error', 'Failed to delete role.');
+              useToast().showToast('error', 'Failed to delete role.');
             }
             setRoleDeleting(false);
             setDeleteRoleModal(null);
@@ -397,9 +402,9 @@ const TeamManagement: React.FC = () => {
       )}
 
       {/* Toast UI */}
-      {toast && (
-        <div className={`fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 rounded-lg shadow-lg text-white font-medium transition-all ${toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
-          {toast.message}
+      {useToast().toast && (
+        <div className={`fixed bottom-6 left-1/2 transform -translate-x-1/2 z-50 px-6 py-3 rounded-lg shadow-lg text-white font-medium transition-all ${useToast().toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
+          {useToast().toast.message}
         </div>
       )}
     </div>

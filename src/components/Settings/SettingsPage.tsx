@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Settings, 
   User, 
@@ -10,14 +10,22 @@ import {
   Key,
   Save,
   Eye,
-  EyeOff
+  EyeOff,
+  Mail,
+  CheckSquare,
+  MessageSquare,
+  AtSign,
+  Calendar
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useNotifications } from '../../hooks/useNotifications';
+import TwoFactorModal from './TwoFactorModal';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_URL = '/api';
 
 const SettingsPage: React.FC = () => {
   const { user, updateProfile } = useAuth();
+  const { settings, updateSettings, requestPermission, permission } = useNotifications(user?.id);
   const [activeTab, setActiveTab] = useState('profile');
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -27,13 +35,6 @@ const SettingsPage: React.FC = () => {
     newPassword: '',
     confirmPassword: '',
     avatar: user?.avatar || '',
-    notifications: {
-      email: true,
-      push: true,
-      taskUpdates: true,
-      mentions: true,
-      meetings: true,
-    },
     theme: 'dark',
     language: 'en',
     timezone: 'UTC',
@@ -41,6 +42,7 @@ const SettingsPage: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [showTwoFactorModal, setShowTwoFactorModal] = useState(false);
 
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
@@ -59,13 +61,18 @@ const SettingsPage: React.FC = () => {
       const checkbox = e.target as HTMLInputElement;
       if (name.includes('.')) {
         const [parent, child] = name.split('.');
-        setFormData(prev => ({
-          ...prev,
-          [parent]: {
-            ...prev[parent as keyof typeof prev] as any,
-            [child]: checkbox.checked
-          }
-        }));
+        if (parent === 'notifications') {
+          // Update settings through the hook
+          updateSettings({ [child]: checkbox.checked });
+        } else {
+          setFormData(prev => ({
+            ...prev,
+            [parent]: {
+              ...prev[parent as keyof typeof prev] as any,
+              [child]: checkbox.checked
+            }
+          }));
+        }
       } else {
         setFormData(prev => ({ ...prev, [name]: checkbox.checked }));
       }
@@ -77,6 +84,62 @@ const SettingsPage: React.FC = () => {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaveStatus('idle');
+    
+    if (activeTab === 'security') {
+      // Handle password change
+      if (formData.newPassword && formData.confirmPassword) {
+        if (!formData.currentPassword) {
+          setSaveStatus('error');
+          return;
+        }
+        
+        if (formData.newPassword !== formData.confirmPassword) {
+          setSaveStatus('error');
+          return;
+        }
+        
+        if (formData.newPassword.length < 6) {
+          setSaveStatus('error');
+          return;
+        }
+        
+        try {
+          const token = localStorage.getItem('frooxi_token');
+          const response = await fetch(`${import.meta.env.VITE_API_URL}/users/change-password`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              currentPassword: formData.currentPassword,
+              newPassword: formData.newPassword
+            })
+          });
+
+          if (response.ok) {
+            setSaveStatus('success');
+            // Clear password fields
+            setFormData(prev => ({
+              ...prev,
+              currentPassword: '',
+              newPassword: '',
+              confirmPassword: ''
+            }));
+          } else {
+            const error = await response.json();
+            console.error('Password change error:', error);
+            setSaveStatus('error');
+          }
+        } catch (error) {
+          console.error('Password change error:', error);
+          setSaveStatus('error');
+        }
+        return;
+      }
+    }
+    
+    // Handle profile updates
     const result = await updateProfile({
       name: formData.name,
       email: formData.email,
@@ -245,90 +308,185 @@ const SettingsPage: React.FC = () => {
                 <div className="space-y-6">
                   <h3 className="text-lg font-semibold text-white mb-4">Notification Preferences</h3>
                   
+                  {/* Push Notification Permission */}
+                  <div className="bg-gray-700/50 rounded-lg p-4 mb-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center">
+                          <Bell className="w-4 h-4 text-white" />
+                        </div>
+                        <div>
+                          <h4 className="text-white font-medium">Browser Notifications</h4>
+                          <p className="text-sm text-gray-400">Receive push notifications in your browser</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className={`text-xs px-2 py-1 rounded-full ${
+                          permission === 'granted' ? 'bg-green-500/20 text-green-400' :
+                          permission === 'denied' ? 'bg-red-500/20 text-red-400' :
+                          'bg-yellow-500/20 text-yellow-400'
+                        }`}>
+                          {permission}
+                        </span>
+                        {permission === 'default' && (
+                          <button
+                            onClick={requestPermission}
+                            className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded transition-colors"
+                          >
+                            Enable
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Notification Channels */}
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="text-white font-medium">Email Notifications</h4>
-                        <p className="text-sm text-gray-400">Receive notifications via email</p>
+                    <h4 className="text-md font-medium text-white mb-3">Notification Channels</h4>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="bg-gray-700/30 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-6 h-6 bg-blue-600 rounded-lg flex items-center justify-center">
+                              <Mail className="w-3 h-3 text-white" />
+                            </div>
+                            <div>
+                              <h5 className="text-white font-medium text-sm">Email Notifications</h5>
+                              <p className="text-xs text-gray-400">Receive notifications via email</p>
+                            </div>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              name="notifications.email"
+                              checked={settings.email}
+                              onChange={handleChange}
+                              className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                          </label>
+                        </div>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          name="notifications.email"
-                          checked={formData.notifications.email}
-                          onChange={handleChange}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
-                      </label>
-                    </div>
 
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="text-white font-medium">Push Notifications</h4>
-                        <p className="text-sm text-gray-400">Receive push notifications in browser</p>
+                      <div className="bg-gray-700/30 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-6 h-6 bg-green-600 rounded-lg flex items-center justify-center">
+                              <Bell className="w-3 h-3 text-white" />
+                            </div>
+                            <div>
+                              <h5 className="text-white font-medium text-sm">Push Notifications</h5>
+                              <p className="text-xs text-gray-400">Receive push notifications in browser</p>
+                            </div>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                              type="checkbox"
+                              name="notifications.push"
+                              checked={settings.push}
+                              onChange={handleChange}
+                              className="sr-only peer"
+                            />
+                            <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                          </label>
+                        </div>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          name="notifications.push"
-                          checked={formData.notifications.push}
-                          onChange={handleChange}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
-                      </label>
                     </div>
+                  </div>
 
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="text-white font-medium">Task Updates</h4>
-                        <p className="text-sm text-gray-400">Get notified when tasks are updated</p>
+                  {/* Notification Types */}
+                  <div className="space-y-4">
+                    <h4 className="text-md font-medium text-white mb-3">Notification Types</h4>
+                    
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between bg-gray-700/30 rounded-lg p-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-6 h-6 bg-orange-600 rounded-lg flex items-center justify-center">
+                            <CheckSquare className="w-3 h-3 text-white" />
+                          </div>
+                          <div>
+                            <h5 className="text-white font-medium text-sm">Task Updates</h5>
+                            <p className="text-xs text-gray-400">Get notified when tasks are updated</p>
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            name="notifications.taskUpdates"
+                            checked={settings.taskUpdates}
+                            onChange={handleChange}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          name="notifications.taskUpdates"
-                          checked={formData.notifications.taskUpdates}
-                          onChange={handleChange}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
-                      </label>
-                    </div>
 
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="text-white font-medium">Mentions</h4>
-                        <p className="text-sm text-gray-400">Get notified when you're mentioned</p>
+                      <div className="flex items-center justify-between bg-gray-700/30 rounded-lg p-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-6 h-6 bg-blue-600 rounded-lg flex items-center justify-center">
+                            <MessageSquare className="w-3 h-3 text-white" />
+                          </div>
+                          <div>
+                            <h5 className="text-white font-medium text-sm">Chat Messages</h5>
+                            <p className="text-xs text-gray-400">Get notified for new chat messages</p>
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            name="notifications.chatMessages"
+                            checked={settings.chatMessages}
+                            onChange={handleChange}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          name="notifications.mentions"
-                          checked={formData.notifications.mentions}
-                          onChange={handleChange}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
-                      </label>
-                    </div>
 
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="text-white font-medium">Meeting Reminders</h4>
-                        <p className="text-sm text-gray-400">Get reminded about upcoming meetings</p>
+                      <div className="flex items-center justify-between bg-gray-700/30 rounded-lg p-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-6 h-6 bg-purple-600 rounded-lg flex items-center justify-center">
+                            <AtSign className="w-3 h-3 text-white" />
+                          </div>
+                          <div>
+                            <h5 className="text-white font-medium text-sm">Mentions</h5>
+                            <p className="text-xs text-gray-400">Get notified when you're mentioned</p>
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            name="notifications.mentions"
+                            checked={settings.mentions}
+                            onChange={handleChange}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          name="notifications.meetings"
-                          checked={formData.notifications.meetings}
-                          onChange={handleChange}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
-                      </label>
+
+                      <div className="flex items-center justify-between bg-gray-700/30 rounded-lg p-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-6 h-6 bg-red-600 rounded-lg flex items-center justify-center">
+                            <Calendar className="w-3 h-3 text-white" />
+                          </div>
+                          <div>
+                            <h5 className="text-white font-medium text-sm">Meeting Reminders</h5>
+                            <p className="text-xs text-gray-400">Get reminded about upcoming meetings</p>
+                          </div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            name="notifications.meetings"
+                            checked={settings.meetings}
+                            onChange={handleChange}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -404,9 +562,32 @@ const SettingsPage: React.FC = () => {
                       <button
                         type="button"
                         className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                        onClick={() => setShowTwoFactorModal(true)}
                       >
                         Enable 2FA
                       </button>
+                    </div>
+
+                    {/* Save Button for Security */}
+                    <div className="flex justify-end pt-6 border-t border-gray-700">
+                      <button
+                        type="submit"
+                        className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors"
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>Change Password</span>
+                      </button>
+                      {saveStatus === 'success' && (
+                        <span className="ml-4 text-green-400">Password changed successfully!</span>
+                      )}
+                      {saveStatus === 'error' && (
+                        <span className="ml-4 text-red-400">
+                          {!formData.currentPassword && 'Please enter your current password.'}
+                          {formData.currentPassword && formData.newPassword !== formData.confirmPassword && 'New passwords do not match.'}
+                          {formData.currentPassword && formData.newPassword === formData.confirmPassword && formData.newPassword.length < 6 && 'Password must be at least 6 characters.'}
+                          {formData.currentPassword && formData.newPassword === formData.confirmPassword && formData.newPassword.length >= 6 && 'Failed to change password. Please check your current password.'}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -517,25 +698,50 @@ const SettingsPage: React.FC = () => {
               )}
 
               {/* Save Button */}
-              <div className="flex justify-end pt-6 border-t border-gray-700">
-                <button
-                  type="submit"
-                  className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>Save Changes</span>
-                </button>
-                {saveStatus === 'success' && (
-                  <span className="ml-4 text-green-400">Profile updated!</span>
-                )}
-                {saveStatus === 'error' && (
-                  <span className="ml-4 text-red-400">Failed to update profile.</span>
-                )}
-              </div>
+              {activeTab !== 'security' && (
+                <div className="flex justify-end pt-6 border-t border-gray-700">
+                  <button
+                    type="submit"
+                    className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg font-medium flex items-center space-x-2 transition-colors"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>
+                      {activeTab === 'profile' && 'Save Profile'}
+                      {activeTab === 'notifications' && 'Save Notifications'}
+                      {activeTab === 'appearance' && 'Save Appearance'}
+                      {activeTab === 'preferences' && 'Save Preferences'}
+                      {activeTab === 'system' && 'Save System Settings'}
+                    </span>
+                  </button>
+                  {saveStatus === 'success' && (
+                    <span className="ml-4 text-green-400">
+                      {activeTab === 'profile' && 'Profile updated!'}
+                      {activeTab === 'notifications' && 'Notification settings saved!'}
+                      {activeTab === 'appearance' && 'Appearance settings saved!'}
+                      {activeTab === 'preferences' && 'Preferences saved!'}
+                      {activeTab === 'system' && 'System settings saved!'}
+                    </span>
+                  )}
+                  {saveStatus === 'error' && (
+                    <span className="ml-4 text-red-400">Failed to save changes.</span>
+                  )}
+                </div>
+              )}
             </form>
           </div>
         </div>
       </div>
+
+      {showTwoFactorModal && (
+        <TwoFactorModal
+          isOpen={showTwoFactorModal}
+          onClose={() => setShowTwoFactorModal(false)}
+          onSuccess={() => {
+            setShowTwoFactorModal(false);
+            setSaveStatus('success');
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -253,9 +253,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const fetchMessages = async (channelId: string) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    const res = await fetch(`${API_URL}/chat/channels/${channelId}/messages`, {
+    
+    // Try groups endpoint first, then channels
+    let res = await fetch(`${API_URL}/chat/groups/${channelId}/messages`, {
       headers: { 'Authorization': `Bearer ${token}` },
     });
+    
+    if (!res.ok) {
+      res = await fetch(`${API_URL}/chat/channels/${channelId}/messages`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+    }
+    
     if (res.ok) {
       const data = await res.json();
       setMessages(data.messages.map((msg: any) => ({ ...msg, id: msg._id })));
@@ -266,11 +275,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const sendMessage = async (channelId: string, content: string, attachment?: any, replyTo?: string | null) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    const res = await fetch(`${API_URL}/chat/channels/${channelId}/messages`, {
+    
+    // Try groups endpoint first, then channels
+    let res = await fetch(`${API_URL}/chat/groups/${channelId}/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ content, attachment, replyTo }),
     });
+    
+    if (!res.ok) {
+      res = await fetch(`${API_URL}/chat/channels/${channelId}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ content, attachment, replyTo }),
+      });
+    }
+    
     if (res.ok) {
       await fetchMessages(channelId);
       
@@ -673,21 +693,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const editMessage = async (channelId: string, msgId: string, content: string) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}`, {
+    
+    // Try groups endpoint first, then channels
+    let res = await fetch(`${API_URL}/chat/groups/${channelId}/messages/${msgId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ content }),
     });
+    
+    if (!res.ok) {
+      await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ content }),
+      });
+    }
     // No need to refetch, socket will update
   };
 
   const deleteMessage = async (channelId: string, msgId: string) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}`, {
+    
+    // Try groups endpoint first, then channels
+    let res = await fetch(`${API_URL}/chat/groups/${channelId}/messages/${msgId}`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${token}` },
     });
+    
+    if (!res.ok) {
+      await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+    }
     // No need to refetch, socket will update
   };
 
@@ -700,22 +739,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const markAsRead = async (channelId: string, lastReadMessageId: string) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    await fetch(`${API_URL}/chat/channels/${channelId}/read`, {
+    
+    // Try groups endpoint first, then channels
+    let res = await fetch(`${API_URL}/chat/groups/${channelId}/read`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ lastReadMessageId }),
     });
+    
+    if (!res.ok) {
+      await fetch(`${API_URL}/chat/channels/${channelId}/read`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ lastReadMessageId }),
+      });
+    }
     // No need to refetch, socket will update
   };
 
   const reactToMessage = async (channelId: string, msgId: string, emoji: string) => {
     const token = localStorage.getItem('frooxi_token');
     if (!token) return;
-    await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}/reactions`, {
+    
+    // Try groups endpoint first, then channels
+    let res = await fetch(`${API_URL}/chat/groups/${channelId}/messages/${msgId}/reactions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ emoji }),
     });
+    
+    if (!res.ok) {
+      await fetch(`${API_URL}/chat/channels/${channelId}/messages/${msgId}/reactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ emoji }),
+      });
+    }
     // No need to refetch, socket will update
   };
 

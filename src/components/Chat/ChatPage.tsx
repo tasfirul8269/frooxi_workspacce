@@ -33,7 +33,11 @@ import {
   UserPlus,
   LogOut,
   Crown,
-  Shield
+  Shield,
+  MessageSquare,
+  ThumbsUp,
+  ThumbsDown,
+  AlertTriangle
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
@@ -143,6 +147,66 @@ function stringToColor(str: string) {
   return colors[Math.abs(hash) % colors.length];
 }
 
+// Feedback Modal Component
+const FeedbackModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (feedback: string) => void;
+}> = ({ isOpen, onClose, onSubmit }) => {
+  const [feedback, setFeedback] = useState('');
+
+  if (!isOpen) return null;
+
+  const handleSubmit = () => {
+    onSubmit(feedback);
+    setFeedback('');
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+      <div className="bg-slate-800 border border-slate-600 rounded-xl p-6 w-full max-w-md mx-4">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-white flex items-center">
+            <AlertTriangle className="w-5 h-5 text-orange-400 mr-2" />
+            Feedback
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-1 text-slate-400 hover:text-white transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-slate-300 text-sm mb-4">
+          Help us improve! What didn't you like about this message?
+        </p>
+        <textarea
+          value={feedback}
+          onChange={(e) => setFeedback(e.target.value)}
+          placeholder="Your feedback (optional)..."
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+          rows={3}
+        />
+        <div className="flex justify-end space-x-2 mt-4">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-slate-300 hover:text-white transition-colors"
+          >
+            Skip
+          </button>
+          <button
+            onClick={handleSubmit}
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+          >
+            Submit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ChatPage: React.FC = () => {
   const { user } = useAuth();
   const { 
@@ -161,7 +225,8 @@ const ChatPage: React.FC = () => {
     sendVoiceSignal,
     pinMessage,
     unpinMessage,
-    leaveGroup
+    leaveGroup,
+    reactToMessage
   } = useApp();
 
   const [selectedGroup, setSelectedGroup] = useState<Group | null>(null);
@@ -175,6 +240,9 @@ const ChatPage: React.FC = () => {
   const [showEditGroup, setShowEditGroup] = useState<{ open: boolean; group: Group | null }>({ open: false, group: null });
   const [showMembersList, setShowMembersList] = useState(false);
   const [showGroupSettings, setShowGroupSettings] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackMessageId, setFeedbackMessageId] = useState<string | null>(null);
 
   // WebRTC refs
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -466,6 +534,7 @@ const ChatPage: React.FC = () => {
     setSelectedGroup(group);
     setShowMembersList(false);
     setShowGroupSettings(false);
+    setReplyingTo(null);
   };
 
   const handleSendMessage = async () => {
@@ -475,11 +544,12 @@ const ChatPage: React.FC = () => {
       selectedGroup.id, 
       messageInput, 
       undefined, 
-      null
+      replyingTo?.id || null
     );
     
     setMessageInput('');
     setShowEmojiPicker(false);
+    setReplyingTo(null);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -532,16 +602,56 @@ const ChatPage: React.FC = () => {
 
   const memberUsers = users.filter(u => selectedGroup?.members.includes(u.id));
 
+  const handleReaction = async (messageId: string, emoji: string) => {
+    if (!selectedGroup) return;
+    
+    // Handle dislike with feedback
+    if (emoji === '👎') {
+      setFeedbackMessageId(messageId);
+      setShowFeedbackModal(true);
+    }
+    
+    await reactToMessage(selectedGroup.id, messageId, emoji);
+  };
+
+  const handleFeedbackSubmit = (feedback: string) => {
+    // Here you could send the feedback to your backend
+    console.log('Feedback for message:', feedbackMessageId, 'Feedback:', feedback);
+    // You could add an API call here to save the feedback
+  };
+
+  const handleReply = (message: ChatMessage) => {
+    setReplyingTo(message);
+    messageInputRef.current?.focus();
+  };
+
+  const handlePin = async (messageId: string) => {
+    if (!selectedGroup) return;
+    await pinMessage(selectedGroup.id, messageId);
+  };
+
+  const handleUnpin = async () => {
+    if (!selectedGroup) return;
+    await unpinMessage(selectedGroup.id);
+  };
+
   return (
     <div className="h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex overflow-hidden">
       {/* Enhanced Sidebar */}
-      <div className="w-80 bg-slate-900/95 backdrop-blur-xl border-r border-slate-700/50 flex flex-col shadow-2xl">
+      <div
+        className={`bg-slate-900/95 backdrop-blur-xl border-r border-slate-700/50 flex flex-col shadow-2xl`}
+        style={{
+          width: 320,
+          minWidth: 320,
+          maxWidth: 320,
+        }}
+      >
         {/* Server Header */}
         <div className="p-6 border-b border-slate-700/50 bg-gradient-to-r from-purple-900/20 to-blue-900/20">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-3">
               <div className="w-10 h-10 bg-gradient-to-br from-purple-500 to-blue-500 rounded-xl flex items-center justify-center shadow-lg">
-                <Hash className="w-6 h-6 text-white" />
+                <MessageSquare className="w-6 h-6 text-white" />
               </div>
               <div>
                 <h2 className="text-xl font-bold text-white">Chat Groups</h2>
@@ -615,6 +725,9 @@ const ChatPage: React.FC = () => {
                     <h3 className="font-semibold text-white truncate">{group.name}</h3>
                     {group.privacy === 'private' && (
                       <Lock className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    )}
+                    {group.pinnedMessageId && (
+                      <Pin className="w-4 h-4 text-yellow-400 flex-shrink-0" />
                     )}
                   </div>
                   <div className="flex items-center space-x-2 mt-1">
@@ -816,6 +929,9 @@ const ChatPage: React.FC = () => {
                     {selectedGroup.privacy === 'private' && (
                       <Lock className="w-5 h-5 text-purple-400" />
                     )}
+                    {selectedGroup.pinnedMessageId && (
+                      <Pin className="w-5 h-5 text-yellow-400" />
+                    )}
                   </div>
                   <p className="text-sm text-slate-400">
                     {selectedGroup.members.length} members
@@ -860,13 +976,31 @@ const ChatPage: React.FC = () => {
                 </div>
                 {isAdmin && (
                   <button
-                    onClick={() => unpinMessage(selectedGroup.id)}
+                    onClick={handleUnpin}
                     className="ml-4 p-2 text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10 rounded-lg transition-all duration-200"
                     title="Unpin"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 )}
+              </div>
+            )}
+
+            {/* Reply Banner */}
+            {replyingTo && (
+              <div className="flex items-center bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-blue-500/20 rounded-xl shadow-lg p-4 mx-8 mt-4 mb-2">
+                <Reply className="w-5 h-5 text-blue-400 mr-3 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <span className="text-xs text-blue-400 font-medium block mb-1">Replying to {users.find(u => u.id === replyingTo.authorId)?.name}</span>
+                  <div className="text-sm text-slate-300 truncate">{replyingTo.content}</div>
+                </div>
+                <button
+                  onClick={() => setReplyingTo(null)}
+                  className="ml-4 p-2 text-blue-400 hover:text-blue-300 hover:bg-blue-500/10 rounded-lg transition-all duration-200"
+                  title="Cancel Reply"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             )}
 
@@ -877,13 +1011,14 @@ const ChatPage: React.FC = () => {
                   <div key={message.id} className="group relative">
                     <MessageComponent
                       message={message}
-                      onReply={() => {}}
+                      onReply={handleReply}
                       onEdit={() => {}}
                       currentUser={user}
                       users={users}
                       isAdmin={isAdmin}
                       isPinned={selectedGroup.pinnedMessageId === message.id}
-                      onPin={() => pinMessage(selectedGroup.id, message.id)}
+                      onPin={() => handlePin(message.id)}
+                      onReaction={(emoji) => handleReaction(message.id, emoji)}
                     />
                   </div>
                 ))}
@@ -963,11 +1098,11 @@ const ChatPage: React.FC = () => {
             </div>
           </>
         ) : (
-          /* Enhanced No Group Selected */
+          /* Enhanced No Group Selected */}
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-md">
               <div className="w-24 h-24 bg-gradient-to-br from-purple-600/20 to-blue-600/20 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl">
-                <Hash className="w-12 h-12 text-purple-400" />
+                <MessageSquare className="w-12 h-12 text-purple-400" />
               </div>
               <h3 className="text-2xl font-bold text-white mb-3">Welcome to Chat</h3>
               <p className="text-slate-400 mb-6 leading-relaxed">
@@ -1041,6 +1176,13 @@ const ChatPage: React.FC = () => {
           onClose={() => setShowEditGroup({ open: false, group: null })} 
         />
       )}
+
+      {/* Feedback Modal */}
+      <FeedbackModal
+        isOpen={showFeedbackModal}
+        onClose={() => setShowFeedbackModal(false)}
+        onSubmit={handleFeedbackSubmit}
+      />
     </div>
   );
 };

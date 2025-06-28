@@ -639,7 +639,7 @@ const ChatPage: React.FC = () => {
     <div className="h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex overflow-hidden">
       {/* Enhanced Sidebar */}
       <div
-        className={`bg-slate-900/95 backdrop-blur-xl border-r border-slate-700/50 flex flex-col shadow-2xl`}
+        className="bg-slate-900/95 backdrop-blur-xl border-r border-slate-700/50 flex flex-col shadow-2xl"
         style={{
           width: 320,
           minWidth: 320,
@@ -1098,7 +1098,7 @@ const ChatPage: React.FC = () => {
             </div>
           </>
         ) : (
-          /* Enhanced No Group Selected */}
+          // Enhanced No Group Selected
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center max-w-md">
               <div className="w-24 h-24 bg-gradient-to-br from-purple-600/20 to-blue-600/20 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-2xl">
